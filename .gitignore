@@ -30,3 +30,7 @@ frontend/bundle-size.json
 
 # Local planning notes
 docs/superpowers/plans/
+
+# Vercel local project metadata and generated deployment
+.vercel/
+.env.*.local

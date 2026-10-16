@@ -1,3 +1,5 @@
+> **Version française pour notre groupe :** voir le [guide de déploiement Vercel + Neon](docs/VERCEL_FR.md). La V1 inclut les comptes sur invitation et la sauvegarde des séances.
+
 <div align="center">
 
 <img src="assets/banner.png" alt="openGym" width="720">

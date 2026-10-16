@@ -1,7 +1,7 @@
 {
   "name": "openGym",
   "short_name": "openGym",
-  "description": "Personal gym & body weight tracker",
+  "description": "Suivi de musculation, des séances et du poids",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

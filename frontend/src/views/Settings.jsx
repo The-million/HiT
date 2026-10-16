@@ -1065,6 +1065,9 @@ function effortHelpSheet() {
 
 function NotificationsCard({ S, update, toast }) {
   if (MOBILE) return <MobileReminderCard S={S} update={update} toast={toast} />
+  if (import.meta.env.VITE_SERVERLESS === '1') return <Section title={t('Notifications')}>
+    <p className="dim">Les rappels en arrière-plan ne sont pas disponibles dans cette version. Le minuteur reste disponible pendant la séance.</p>
+  </Section>
   return <PushCard S={S} update={update} toast={toast} />
 }
 

@@ -33,7 +33,7 @@ import { createDeviceLink, findDeviceLink, burnDeviceLink, dropDeviceLinks } fro
 import { createMediaStore, mediaLimits, mediaConfig, MediaError, HASH_RE } from './media.js';
 import { effectiveRoutineId } from './queue.js';
 import { stampPut } from './sync-stamps.js';
-import { atomicWrite as durableWrite } from './durable.js';
+import { SERVERLESS, useDocuments, readDocument, writeDocument, appendDocument, removeDocument } from './serverless/documents.js';
 import { excusedOn, nudgeFor, nudgeWindowOpen, toneOf } from './nudge.js';
 
 const PORT = +(process.env.PORT || 3000);
@@ -94,7 +94,7 @@ const MAX_BODY = 5 * 1024 * 1024;
 // Secure cookies require HTTPS; over plain http://localhost the flag would drop the cookie
 const SECURE = /^https:/i.test(ORIGIN) ? ' Secure;' : '';
 
-fs.mkdirSync(DATA, { recursive: true });
+if (!SERVERLESS) fs.mkdirSync(DATA, { recursive: true });
 /* The secrets are locked down file by file rather than by sealing the whole directory.
  *
  * A blanket `chmod 0700` on DATA looks stronger and is worse: ./data is a host bind mount and
@@ -107,12 +107,13 @@ fs.mkdirSync(DATA, { recursive: true });
  * reason to refuse to boot. The privilege drop in adapters/spawn.js is the control that does
  * fail closed. */
 const lock = f => { try { fs.chmodSync(path.join(DATA, f), 0o600); } catch { /* not present yet, or host says no */ } };
-['secret', 'db.json', 'coach.json'].forEach(lock);
+if (!SERVERLESS) ['secret', 'db.json', 'coach.json'].forEach(lock);
 
 /* ---------- secret + db ---------- */
 const secretFile = path.join(DATA, 'secret');
-if (!fs.existsSync(secretFile)) fs.writeFileSync(secretFile, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
-const SECRET = fs.readFileSync(secretFile, 'utf8').trim();
+if (!SERVERLESS && !fs.existsSync(secretFile)) fs.writeFileSync(secretFile, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
+const SECRET = SERVERLESS ? process.env.SESSION_SECRET : fs.readFileSync(secretFile, 'utf8').trim();
+if (SERVERLESS && (!SECRET || SECRET.length < 32)) throw new Error('SESSION_SECRET must contain at least 32 random characters');
 
 const dbFile = path.join(DATA, 'db.json');
 // Every account, passkey and invite. Only a missing file starts empty: an unreadable one (a write
@@ -123,10 +124,11 @@ const dbFile = path.join(DATA, 'db.json');
 // refuses to start, saying why, rather than start as a new instance.
 function loadDb() {
   let raw;
-  try { raw = fs.readFileSync(dbFile, 'utf8'); }
+  try { raw = readDocument(dbFile); }
   catch (e) { if (e.code === 'ENOENT') return { users: [], creds: [], subs: [], invites: [] }; throw e; }
   const parse = text => { const v = JSON.parse(text); if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('not an object'); return v; };
   try { return parse(raw); } catch (err) {
+    if (SERVERLESS) throw err;
     const aside = `${dbFile}.unreadable-${Date.now()}`;
     try { fs.copyFileSync(dbFile, aside); } catch { /* the original stays where it is anyway */ }
     console.error(`db.json cannot be read (${err.message}); kept a copy as ${path.basename(aside)}`);
@@ -156,12 +158,13 @@ const isAdmin = user => !!user && (user.admin === true || ADMIN_UIDS.includes(us
 function saveDb() {
   const text = JSON.stringify(db, null, 2);
   atomicWrite(dbFile, text, 0o600);
+  if (SERVERLESS) return;
   try { atomicWrite(dbFile + '.bak', text, 0o600); }
   catch (e) { console.error('db.json.bak could not be written', e.message); }
 }
 // Flushed before and after the rename (durable.js): a host reset must not bring back the file
 // the client was told had been replaced.
-function atomicWrite(file, content, mode) { durableWrite(file, content, mode); }
+function atomicWrite(file, content, mode) { writeDocument(file, content, mode); }
 // How many earlier write ids a document keeps (`_wids`, see PUT /api/data): a device that last
 // synced more writes ago than this merges on its next pull instead of taking the server's copy.
 const WID_KEEP = 50;
@@ -179,7 +182,7 @@ function notePull(user, now = Date.now()) {
 // The later of the last push and the last pull.
 const lastSyncOf = (u, S) => Math.max(S?._ts || 0, u?.lastPull || 0) || null;
 function readState(uid) {
-  try { return JSON.parse(fs.readFileSync(stateFile(uid), 'utf8')); } catch { return null; }
+  try { return JSON.parse(readDocument(stateFile(uid))); } catch { return null; }
 }
 // GET and PUT /api/data tell a profile with no state yet from one whose file cannot be read: the
 // second answers 503 instead of an empty profile, which a device would adopt, or a write would
@@ -187,7 +190,7 @@ function readState(uid) {
 const UNREADABLE = Symbol('unreadable');
 function readStateStrict(uid) {
   let raw;
-  try { raw = fs.readFileSync(stateFile(uid), 'utf8'); }
+  try { raw = readDocument(stateFile(uid)); }
   catch (e) { return e.code === 'ENOENT' ? null : UNREADABLE; }
   try { return JSON.parse(raw); } catch { return UNREADABLE; }
 }
@@ -211,10 +214,12 @@ const records = v => (Array.isArray(v) ? v.filter(record) : []);
 /* ---------- push notifications (Web Push / VAPID) ---------- */
 const vapidFile = path.join(DATA, 'vapid.json');
 let vapid;
-try { vapid = JSON.parse(fs.readFileSync(vapidFile, 'utf8')); }
-catch { vapid = webpush.generateVAPIDKeys(); fs.writeFileSync(vapidFile, JSON.stringify(vapid), { mode: 0o600 }); }
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || (SECURE ? ORIGIN : 'mailto:admin@localhost');
-webpush.setVapidDetails(VAPID_SUBJECT, vapid.publicKey, vapid.privateKey);
+if (!SERVERLESS) {
+  try { vapid = JSON.parse(fs.readFileSync(vapidFile, 'utf8')); }
+  catch { vapid = webpush.generateVAPIDKeys(); fs.writeFileSync(vapidFile, JSON.stringify(vapid), { mode: 0o600 }); }
+  const VAPID_SUBJECT = process.env.VAPID_SUBJECT || (SECURE ? ORIGIN : 'mailto:admin@localhost');
+  webpush.setVapidDetails(VAPID_SUBJECT, vapid.publicKey, vapid.privateKey);
+}
 
 /* A push subscription's `endpoint` is a URL this server connects out to, chosen by whoever is
    signed in — so without a check /api/push/* is a request-forgery lever, and the api container
@@ -464,6 +469,7 @@ const STATE_CACHE_MAX = 64;
 const STATE_CACHE_TTL_MS = Math.max(50, +(process.env.STATE_CACHE_TTL_MS || 600000) || 600000);
 const stateCache = new Map(); // uid -> { mtimeMs, size, hitAt, S }
 function readStateCached(uid) {
+  if (SERVERLESS) return readState(uid);
   let st;
   try { st = fs.statSync(stateFile(uid)); } catch { stateCache.delete(uid); return null; }
   const now = Date.now();
@@ -497,7 +503,7 @@ function nudgeTick(user, S, now) {
   saveDb();
   sendPush(user.id, nudgePush(S.lang, toneOf(S.reminder), routine, now.date));
 }
-setInterval(() => {
+if (!SERVERLESS) setInterval(() => {
   for (const user of db.users) {
     if (!db.subs.some(s => s.userId === user.id)) continue;
     // One user's state file is one user's problem: a shape this tick cannot read is logged and
@@ -701,7 +707,7 @@ function takeChallenge(cid) {
   if (!c || c.exp < Date.now()) return null;
   return c;
 }
-setInterval(() => { for (const [k, v] of challenges) if (v.exp < Date.now()) challenges.delete(k); }, 60000).unref();
+if (!SERVERLESS) setInterval(() => { for (const [k, v] of challenges) if (v.exp < Date.now()) challenges.delete(k); }, 60000).unref();
 
 // ---------- device pairing (mobile app "connect to my server", no WebAuthn ceremony) ----------
 // A passkey ceremony can't run inside the app's WebView (its origin never matches RP_ID), so the
@@ -716,7 +722,7 @@ function makePairCode() {
   } while (pairings.has(code));
   return code;
 }
-setInterval(() => { for (const [k, v] of pairings) if (v.exp < Date.now()) pairings.delete(k); }, 60000).unref();
+if (!SERVERLESS) setInterval(() => { for (const [k, v] of pairings) if (v.exp < Date.now()) pairings.delete(k); }, 60000).unref();
 
 /* ---------- helpers ---------- */
 function json(res, code, obj, extraHeaders) {
@@ -800,7 +806,7 @@ function livePresence(uid) {
   const { hiddenAt: _away, ...live } = p;   // the mark is bookkeeping; the dashboard gets the row it always did
   return live;
 }
-setInterval(() => { const now = Date.now(); for (const [k, v] of presence) if (!presenceListed(v, now)) presence.delete(k); }, 30000).unref();
+if (!SERVERLESS) setInterval(() => { const now = Date.now(); for (const [k, v] of presence) if (!presenceListed(v, now)) presence.delete(k); }, 30000).unref();
 
 /* ---------- audit log ---------- */
 // Who signed in, who tried and failed, and what an admin changed. One JSON object per line in
@@ -848,7 +854,7 @@ function clientIp(req) {
 
 function auditLines() {
   let text;
-  try { text = fs.readFileSync(auditFile, 'utf8'); } catch { return []; }
+  try { text = readDocument(auditFile); } catch { return []; }
   const rows = [];
   for (const line of text.split('\n')) {
     if (!line) continue;
@@ -888,12 +894,12 @@ function audit(req, ev, f = {}) {
   if (f.act) rec.act = String(f.act).slice(0, 40);
   const ip = clientIp(req);
   if (ip) rec.ip = ip;
-  try { fs.appendFileSync(auditFile, JSON.stringify(rec) + '\n'); }
+  try { appendDocument(auditFile, JSON.stringify(rec) + '\n'); }
   catch (e) { return console.error('audit write failed', e.message); }
   // Amortized: a 5000-event cap rewrites the file once per ~1250 events.
   if (AUDIT_MAX && ++auditCount > AUDIT_MAX * 1.25) compactAudit();
 }
-if (AUDIT_ON) {
+if (AUDIT_ON && !SERVERLESS) {
   compactAudit();                                // prune on boot, seed auditSeq/auditCount
   setInterval(compactAudit, 3600000).unref();    // honour AUDIT_DAYS on an idle instance too
 }
@@ -943,7 +949,7 @@ const ACCOUNT_FAILS = createBackoff({
   // At most one per profile with a password, so this cannot grow without bound.
   keep: k => k.startsWith('acct:') && hasPassword(db.users.find(u => u.id === k.slice(5)))
 });
-setInterval(() => { AUTH_BURST.sweep(); ADDR_FAILS.sweep(); ACCOUNT_FAILS.sweep(); }, 60000).unref();
+if (!SERVERLESS) setInterval(() => { AUTH_BURST.sweep(); ADDR_FAILS.sweep(); ACCOUNT_FAILS.sweep(); }, 60000).unref();
 
 // Route -> the kind of failure it can count. Every route listed here also spends the burst
 // budget; `null` spends only that.
@@ -1009,7 +1015,7 @@ function strikeAddress(req, kind) {
 // dropped is a row that says the same thing as the ten before it.
 const FAIL_AUDIT = createWindow({ max: 10, windowMs: 60000 });
 const FAIL_AUDIT_ALL = createWindow({ max: 120, windowMs: 60000 });
-setInterval(() => { FAIL_AUDIT.sweep(); FAIL_AUDIT_ALL.sweep(); }, 60000).unref();
+if (!SERVERLESS) setInterval(() => { FAIL_AUDIT.sweep(); FAIL_AUDIT_ALL.sweep(); }, 60000).unref();
 function auditFail(req, ev, f) {
   if (FAIL_AUDIT.take(ev + '|' + limitAddress(req)) || FAIL_AUDIT_ALL.take(ev)) return;
   audit(req, ev, f);
@@ -1757,10 +1763,10 @@ const passkeyRoutes = {
 // MEDIA_UPLOADS=0 takes the routes and the /api/config block away, but the store is created
 // either way: an admin deleting a profile must still remove files uploaded while it was on.
 const MEDIA_LIMITS = mediaLimits(process.env);
-const MEDIA_ON = MEDIA_LIMITS.enabled;
+const MEDIA_ON = !SERVERLESS && MEDIA_LIMITS.enabled;
 const MEDIA = createMediaStore({ dir: path.join(DATA, 'uploads'), limits: MEDIA_LIMITS, readState });
 // Leftovers of uploads the previous process was receiving when it stopped.
-try { MEDIA.cleanTmp(); } catch (e) { console.error('media: boot cleanup failed', e.message); }
+try { if (!SERVERLESS) MEDIA.cleanTmp(); } catch (e) { console.error('media: boot cleanup failed', e.message); }
 // Per profile, not per address: every upload is signed in, and behind a proxy one address can be
 // a whole household. The hourly budget is generous (an import of a backup re-uploads everything
 // at once); the two-in-flight cap in media.js is what keeps one phone from holding many sockets.
@@ -1770,7 +1776,7 @@ const MEDIA_SWEEPS = createWindow({ max: 10, windowMs: 3600000 });
 // Uid -> until when its throttle has already been recorded, so a client hammering a closed
 // window writes one audit line per window, not one per request.
 const mediaThrottleNoted = new Map();
-setInterval(() => {
+if (!SERVERLESS) setInterval(() => {
   MEDIA_BURST.sweep(); MEDIA_SWEEPS.sweep();
   for (const [k, until] of mediaThrottleNoted) if (until < Date.now()) mediaThrottleNoted.delete(k);
 }, 600000).unref();
@@ -1887,6 +1893,7 @@ const mediaRoutes = {
 const DATA_PROBE_MS = 5000;
 let dataProbe = { at: 0, ok: false };
 function dataWritable() {
+  if (SERVERLESS) return true; // A PostgreSQL transaction already holds the instance row.
   const now = Date.now();
   if (dataProbe.at && now - dataProbe.at < DATA_PROBE_MS) return dataProbe.ok;
   const probe = path.join(DATA, '.health-' + process.pid);
@@ -1934,6 +1941,7 @@ const routes = {
     // that has no Coach. The key's absence is that answer.
     json(res, 200, {
       invite_only: INVITE_ONLY, allow_guest: ALLOW_GUEST,
+      ...(SERVERLESS ? { push: false } : {}),
       // Only when on, so an instance without passwords answers exactly as it did before (#118).
       ...(PASSWORD_LOGIN ? { password_login: true } : {}),
       // Public: the sign-in screen is the first thing that reads it.
@@ -1941,7 +1949,7 @@ const routes = {
       // Public like the two flags above: the caps are not a secret, and the absence of the
       // block is how the app knows this server does not take photos and videos at all.
       ...(MEDIA_ON ? { media: mediaConfig(MEDIA_LIMITS) } : {}),
-      ...(readSession(req) ? { coach: coachConfig.publicConfig() } : {})
+      ...(readSession(req) ? { coach: SERVERLESS ? null : coachConfig.publicConfig() } : {})
     });
   },
 
@@ -2486,10 +2494,10 @@ const routes = {
     dropDeviceLinks(db, u.id);
     presence.delete(u.id);
     // The training history and any Coach credential of theirs, both outside db.json.
-    try { fs.unlinkSync(stateFile(u.id)); } catch { /* already gone */ }
-    try { coachConfig.clearProfileAuth(u.id); } catch { /* nothing stored */ }
+    try { removeDocument(stateFile(u.id)); } catch { /* already gone */ }
+    try { if (!SERVERLESS) coachConfig.clearProfileAuth(u.id); } catch { /* nothing stored */ }
     // Their photos and videos — the one place a profile's folder under uploads/ is removed.
-    try { MEDIA.removeUser(u.id); } catch (e) { console.error('media: could not remove uploads of', u.id, e.message); }
+    try { if (!SERVERLESS) MEDIA.removeUser(u.id); } catch (e) { console.error('media: could not remove uploads of', u.id, e.message); }
     saveDb();
     // Logged with the name, because the id is about to mean nothing to anyone reading this back.
     audit(req, 'admin.user.delete', { user: admin, msg: name });
@@ -2563,7 +2571,7 @@ const routes = {
   // ./data/audit.log already is the export, in a format jq reads directly.
   'POST /api/admin/audit/clear': async (req, res) => {
     const admin = requireAdmin(req, res); if (!admin) return;
-    try { fs.unlinkSync(auditFile); } catch { /* nothing logged yet */ }
+    try { removeDocument(auditFile); } catch { /* nothing logged yet */ }
     auditCount = 0;
     audit(req, 'admin.audit.clear', { user: admin });
     json(res, 200, { ok: true });
@@ -2573,7 +2581,7 @@ const routes = {
   // Routes live in coach/routes.js and are handed the helpers above rather than importing
   // them: they are closures over db and SECRET, and passing them in keeps that module free of
   // a cycle. Every one of them is inert while the feature is unconfigured.
-  ...coachRoutes({ json, readBody, readSession, requireAdmin }),
+  ...(!SERVERLESS ? coachRoutes({ json, readBody, readSession, requireAdmin }) : {}),
 
   /* ---------- photos & videos ---------- */
   // Absent, not refusing, when MEDIA_UPLOADS=0: a 404 is what a server from before the feature
@@ -2584,20 +2592,22 @@ const routes = {
 /* ---------- Coach: boot recovery, notifications, scheduled reviews ---------- */
 // A job that was running when the process died is not coming back; say so rather than leaving
 // a spinner that never resolves.
-coachJobs.recoverOnBoot();
-// A ready proposal is the one Coach event worth a notification. Failures and "nothing to
-// change" stay silent on purpose (FR-38/E4).
-coachJobs.setProposalHook((uid, pending) => {
-  const n = (pending?.changes || []).length;
-  if (!n) return;
-  sendPush(uid, {
-    title: 'Your Coach has been reading',
-    body: n === 1 ? '1 suggestion after this week' : `${n} suggestions after this week`,
-    tag: 'coach-proposal', url: '#/coach'
+if (!SERVERLESS) {
+  coachJobs.recoverOnBoot();
+  // A ready proposal is the one Coach event worth a notification. Failures and "nothing to
+  // change" stay silent on purpose (FR-38/E4).
+  coachJobs.setProposalHook((uid, pending) => {
+    const n = (pending?.changes || []).length;
+    if (!n) return;
+    sendPush(uid, {
+      title: 'Your Coach has been reading',
+      body: n === 1 ? '1 suggestion after this week' : `${n} suggestions after this week`,
+      tag: 'coach-proposal', url: '#/coach'
+    });
   });
-});
-startCadence({ users: () => db.users, userNow });
-startWarmup();
+  startCadence({ users: () => db.users, userNow });
+  startWarmup();
+}
 
 // node's requestTimeout is one number for every route, and it is half an hour (below) for the
 // sake of one: a video uploaded over a slow uplink. Every other request keeps node's old five
@@ -2623,7 +2633,7 @@ function bodyDeadline(req) {
 // The Capacitor WebView origins of the Android and iOS app.
 const APP_ORIGINS = new Set(['https://localhost', 'capacitor://localhost', 'http://localhost']);
 
-const server = http.createServer(async (req, res) => {
+export async function requestHandler(req, res) {
   bodyDeadline(req);
   // Same-origin (the deployed nginx-proxied web app) never triggers CORS, so this only matters
   // for the paired mobile app calling in from its own WebView origin. It carries no cookie
@@ -2658,6 +2668,7 @@ const server = http.createServer(async (req, res) => {
   // above stays a plain lookup, and so csrfOk and the catch-all see one name for every file.
   const mm = /^\/api\/media\/([0-9a-f]{64})$/.exec(url.pathname);
   if (mm) { key = req.method + ' /api/media/{hash}'; req.mediaHash = mm[1]; }
+  if (SERVERLESS && url.pathname.startsWith('/api/push/')) return json(res, 404, { error: 'push disabled' });
   const handler = routes[key];
   if (!handler) return json(res, 404, { error: 'not found' });
   if (!csrfOk(req, key)) {
@@ -2695,15 +2706,57 @@ const server = http.createServer(async (req, res) => {
     console.error(key, e);
     if (!res.headersSent) json(res, 500, { error: 'server error' });
   }
-});
-// Node's default of 300 s for a whole request would answer 408 to a 40 MB video on a ~1 Mbit/s
-// uplink. Half an hour covers that; a stalled upload is cut much sooner by its own 60 s idle
-// timer in media.js, a client that never finishes its headers still meets headersTimeout, and
-// every other route's body still has to arrive within five minutes (bodyDeadline above).
-server.requestTimeout = 30 * 60000;
-server.headersTimeout = 60000;
-// The port is read back off the listener rather than echoed from PORT, so the line states the
-// port that was actually bound: with PORT=0 the OS picks one, and a caller that did not choose it
-// (the tests spawn the server that way, and so does anyone running two instances on one box) has
-// no other way to learn it.
-server.listen(PORT, () => console.log(`gym-api on :${server.address().port} (rpID=${RP_ID}, origin=${ORIGIN})`));
+}
+if (!SERVERLESS) {
+  const server = http.createServer(requestHandler);
+  // Node's default of 300 s for a whole request would answer 408 to a 40 MB video on a ~1 Mbit/s
+  // uplink. Half an hour covers that; a stalled upload is cut much sooner by its own 60 s idle
+  // timer in media.js, a client that never finishes its headers still meets headersTimeout, and
+  // every other route's body still has to arrive within five minutes (bodyDeadline above).
+  server.requestTimeout = 30 * 60000;
+  server.headersTimeout = 60000;
+  // The port is read back off the listener rather than echoed from PORT, so the line states the
+  // port that was actually bound: with PORT=0 the OS picks one, and a caller that did not choose it
+  // (the tests spawn the server that way, and so does anyone running two instances on one box) has
+  // no other way to learn it.
+  server.listen(PORT, () => console.log(`gym-api on :${server.address().port} (rpID=${RP_ID}, origin=${ORIGIN})`));
+
+}
+
+// Called only by the serialized PostgreSQL adapter. Challenges and throttles must
+// survive a cold start just like accounts, otherwise a passkey cannot finish on
+// another instance and a password limit can be bypassed by changing instances.
+const runtimeMaps = { challenges, pairings, presence };
+const runtimeLimits = { AUTH_BURST, ADDR_FAILS, ACCOUNT_FAILS, FAIL_AUDIT, FAIL_AUDIT_ALL };
+export function restoreServerless(snapshot) {
+  if (!SERVERLESS) throw new Error('Serverless storage is not enabled');
+  useDocuments(snapshot.documents);
+  db = loadDb();
+  for (const k of ['users', 'creds', 'subs', 'invites', 'deviceLinks']) db[k] ||= [];
+  // A bootstrap invitation is inserted exactly once, before the first account.
+  if (!Object.hasOwn(snapshot.documents, 'db.json')) {
+    const code = process.env.BOOTSTRAP_INVITE_CODE;
+    if (!code || !/^[A-Z0-9]{16,64}$/.test(code)) throw new Error('BOOTSTRAP_INVITE_CODE must be 16–64 uppercase letters/digits');
+    db.invites.push({ code, created: new Date().toISOString() });
+    saveDb();
+  }
+  for (const [name, map] of Object.entries(runtimeMaps)) {
+    map.clear();
+    for (const [k, v] of snapshot.runtime[name] || []) map.set(k, v);
+  }
+  for (const [name, limit] of Object.entries(runtimeLimits)) {
+    limit.restore(snapshot.runtime[name] || []);
+    limit.sweep();
+  }
+  const now = Date.now();
+  for (const map of [challenges, pairings]) for (const [k, v] of map) if (v.exp < now) map.delete(k);
+  for (const [k, v] of presence) if (!presenceListed(v, now)) presence.delete(k);
+  auditSeq = snapshot.runtime.auditSeq || 0;
+  compactAudit();
+  stateCache.clear();
+}
+export function snapshotServerless(snapshot) {
+  for (const [name, map] of Object.entries(runtimeMaps)) snapshot.runtime[name] = [...map];
+  for (const [name, limit] of Object.entries(runtimeLimits)) snapshot.runtime[name] = limit.snapshot();
+  snapshot.runtime.auditSeq = auditSeq;
+}

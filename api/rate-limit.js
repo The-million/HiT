@@ -53,6 +53,7 @@ function boundedMap(maxKeys, rank, keep = () => false) {
       m.set(k, v);
     },
     delete: k => m.delete(k),
+    clear: () => m.clear(),
     entries: () => m.entries(),
     get size() { return m.size; }
   };
@@ -112,6 +113,8 @@ export function createBackoff({ free = 5, baseMs = MINUTE, maxMs = 60 * MINUTE, 
     sweep() {
       for (const [k, e] of map.entries()) if (!locked(e) && !fresh(e)) map.delete(k);
     },
+    snapshot: () => [...map.entries()],
+    restore(rows) { map.clear(); for (const [k, v] of rows) map.set(k, v); },
     get size() { return map.size; }
   };
 }
@@ -131,6 +134,8 @@ export function createWindow({ max = 60, windowMs = MINUTE, maxKeys = 10000, now
     sweep() {
       for (const [k, e] of map.entries()) if (now() - e.start >= windowMs) map.delete(k);
     },
+    snapshot: () => [...map.entries()],
+    restore(rows) { map.clear(); for (const [k, v] of rows) map.set(k, v); },
     get size() { return map.size; }
   };
 }

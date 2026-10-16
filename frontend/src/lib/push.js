@@ -5,7 +5,7 @@ import { api } from './api.js'
 // main.jsx registers the service worker on https only, so on any other origin there is no
 // worker and `navigator.serviceWorker.ready` never settles — the toggle looked usable and hung.
 const secureOrigin = () => typeof location === 'undefined' || location.protocol === 'https:'
-export const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && secureOrigin()
+export const pushSupported = () => import.meta.env.VITE_SERVERLESS !== '1' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && secureOrigin()
 export const pushPermission = () => (pushSupported() ? Notification.permission : 'unsupported')
 
 const urlBase64ToUint8Array = b64 => {
