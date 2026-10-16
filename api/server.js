@@ -148,6 +148,47 @@ db.creds = db.creds || [];
 db.subs = db.subs || [];
 db.invites = db.invites || [];
 db.deviceLinks = db.deviceLinks || [];   // unused one-time device links, hashed (device-link.js)
+// Social data lives in the same transaction as accounts on Vercel. Older instances have no
+// social key; only a mutation writes the versioned document for the first time.
+function social() {
+  db.social ||= { version: 1, relationships: [] };
+  if (db.social.version !== 1 || !Array.isArray(db.social.relationships)) throw new Error('Unsupported social data');
+  return db.social;
+}
+const activeUser = id => db.users.find(u => u.id === id && !u.disabled) || null;
+const socialProfile = u => ({ id: u.id, name: u.name });
+const socialRow = (r, viewerId) => ({
+  id: r.id, status: r.status, direction: r.from === viewerId ? 'outgoing' : 'incoming',
+  user: socialProfile(activeUser(r.from === viewerId ? r.to : r.from)), created: r.created
+});
+function visibleRelations(viewerId) {
+  return social().relationships.filter(r =>
+    (r.from === viewerId || r.to === viewerId) && activeUser(r.from) && activeUser(r.to));
+}
+async function friendAction(req, res, action) {
+  const user = readSession(req);
+  if (!user) return json(res, 401, { error: 'not signed in' });
+  const wait = SOCIAL_ACTIONS.take(user.id);
+  if (wait) return tooMany(res, wait);
+  const body = await readBody(req);
+  if (readSession(req) !== user) return json(res, 401, { error: 'not signed in' });
+  const id = typeof body.id === 'string' ? body.id : '';
+  const rows = social().relationships;
+  const row = rows.find(r => r.id === id && (r.from === user.id || r.to === user.id));
+  if (!row || !activeUser(row.from) || !activeUser(row.to)) return json(res, 404, { error: 'request not found' });
+  if (action === 'accept') {
+    if (row.to !== user.id) return json(res, 403, { error: 'only the recipient can accept' });
+    if (row.status !== 'pending' && row.status !== 'accepted') return json(res, 409, { error: 'request is no longer pending' });
+    if (row.status === 'pending') { row.status = 'accepted'; row.updated = new Date().toISOString(); saveDb(); }
+    return json(res, 200, { relationship: socialRow(row, user.id) });
+  }
+  if (action === 'decline' && !(row.status === 'pending' && row.to === user.id)) return json(res, 403, { error: 'only the recipient can decline' });
+  if (action === 'cancel' && !(row.status === 'pending' && row.from === user.id)) return json(res, 403, { error: 'only the sender can cancel' });
+  if (action === 'remove' && row.status !== 'accepted') return json(res, 409, { error: 'friendship is not accepted' });
+  social().relationships = rows.filter(r => r.id !== id);
+  saveDb();
+  json(res, 200, { ok: true });
+}
 const isAdmin = user => !!user && (user.admin === true || ADMIN_UIDS.includes(user.id));
 // 0600: db.json holds passkey credential material. It used to be covered by a blanket 0700 on
 // the whole directory; now that the directory stays traversable, the file carries its own mode.
@@ -943,13 +984,15 @@ if (AUDIT_ON && !SERVERLESS) {
 // the whole instance: one client can pause *password* sign-in for everybody for a while, and the
 // per-name pause is what still protects each password.
 const AUTH_BURST = createWindow({ max: 60, windowMs: 60000 });
+const SOCIAL_LOOKUPS = createWindow({ max: 20, windowMs: 60000 });
+const SOCIAL_ACTIONS = createWindow({ max: 30, windowMs: 60000 });
 const ADDR_FAILS = createBackoff({ free: 20, baseMs: 30000, maxMs: 15 * 60000, forgetMs: 3600000 });
 const ACCOUNT_FAILS = createBackoff({
   free: 5, baseMs: 60000, maxMs: 3600000, forgetMs: 24 * 3600000,
   // At most one per profile with a password, so this cannot grow without bound.
   keep: k => k.startsWith('acct:') && hasPassword(db.users.find(u => u.id === k.slice(5)))
 });
-if (!SERVERLESS) setInterval(() => { AUTH_BURST.sweep(); ADDR_FAILS.sweep(); ACCOUNT_FAILS.sweep(); }, 60000).unref();
+if (!SERVERLESS) setInterval(() => { AUTH_BURST.sweep(); ADDR_FAILS.sweep(); ACCOUNT_FAILS.sweep(); SOCIAL_LOOKUPS.sweep(); SOCIAL_ACTIONS.sweep(); }, 60000).unref();
 
 // Route -> the kind of failure it can count. Every route listed here also spends the burst
 // budget; `null` spends only that.
@@ -2173,6 +2216,61 @@ const routes = {
   // Always there: more passkeys and device links need nothing an instance has to switch on.
   ...passkeyRoutes,
 
+  /* ---------- friends (separate from invitations and private training data) ---------- */
+  'GET /api/friends': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    json(res, 200, { code: user.id, relationships: visibleRelations(user.id).map(r => socialRow(r, user.id)) });
+  },
+  // Exact name or the account's random friend code. A duplicate display name must be
+  // disambiguated with a code; there is deliberately no directory or partial search.
+  'POST /api/friends/lookup': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const wait = SOCIAL_LOOKUPS.take(user.id);
+    if (wait) return tooMany(res, wait);
+    const body = await readBody(req);
+    if (readSession(req) !== user) return json(res, 401, { error: 'not signed in' });
+    const query = typeof body.query === 'string' ? body.query.trim() : '';
+    if (!query || query.length > 80) return json(res, 400, { error: 'enter an exact name or friend code' });
+    let matches = db.users.filter(u => !u.disabled && u.id !== user.id && u.id === query);
+    if (!matches.length) matches = db.users.filter(u => !u.disabled && u.id !== user.id && nameKey(u.name) === nameKey(query));
+    if (matches.length > 1) return json(res, 409, { error: 'several people use this name; ask for their friend code', code: 'ambiguous' });
+    if (!matches.length) return json(res, 404, { error: 'no profile found' });
+    const target = matches[0];
+    const relation = visibleRelations(user.id).find(r => (r.from === target.id || r.to === target.id));
+    json(res, 200, { user: socialProfile(target), relationship: relation ? socialRow(relation, user.id) : null });
+  },
+  'POST /api/friends/request': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const wait = SOCIAL_ACTIONS.take(user.id);
+    if (wait) return tooMany(res, wait);
+    const body = await readBody(req);
+    if (readSession(req) !== user) return json(res, 401, { error: 'not signed in' });
+    const targetId = typeof body.targetId === 'string' ? body.targetId : '';
+    if (targetId === user.id) return json(res, 400, { error: 'you cannot add yourself' });
+    const target = activeUser(targetId);
+    if (!target) return json(res, 404, { error: 'no profile found' });
+    const existing = social().relationships.find(r =>
+      (r.from === user.id && r.to === targetId) || (r.from === targetId && r.to === user.id));
+    if (existing) {
+      if (existing.from === targetId && existing.status === 'pending') return json(res, 409, { error: 'this person has already sent you a request', code: 'incoming-request' });
+      return json(res, 200, { relationship: socialRow(existing, user.id) });
+    }
+    if (social().relationships.filter(r => r.from === user.id && r.status === 'pending').length >= 25)
+      return json(res, 429, { error: 'too many pending requests' });
+    const now = new Date().toISOString();
+    const relation = { id: crypto.randomBytes(12).toString('base64url'), from: user.id, to: targetId, status: 'pending', created: now, updated: now };
+    social().relationships.push(relation);
+    saveDb();
+    json(res, 200, { relationship: socialRow(relation, user.id) });
+  },
+  'POST /api/friends/accept': (req, res) => friendAction(req, res, 'accept'),
+  'POST /api/friends/decline': (req, res) => friendAction(req, res, 'decline'),
+  'POST /api/friends/cancel': (req, res) => friendAction(req, res, 'cancel'),
+  'POST /api/friends/remove': (req, res) => friendAction(req, res, 'remove'),
+
   // `rev` is the server's own count of writes to this profile (also stored inside the document as
   // `_rev`, so every other reader of the file — reminder tick, admin, Coach, MCP — is unaffected).
   // A client pushes it back as `baseRev`, and a write over a document it never saw is refused.
@@ -2469,6 +2567,7 @@ const routes = {
     if (u.disabled) presence.delete(u.id);   // drop them off "training now" at once
     // A device link made before the lock would otherwise still be waiting when it is lifted.
     if (u.disabled) dropDeviceLinks(db, u.id);
+    if (u.disabled) social().relationships = social().relationships.filter(r => r.from !== u.id && r.to !== u.id);
     saveDb();
     audit(req, u.disabled ? 'admin.user.disable' : 'admin.user.enable', { user: admin, target: u });
     json(res, 200, { ok: true, id: u.id, disabled: u.disabled });
@@ -2491,6 +2590,7 @@ const routes = {
     db.users = db.users.filter(x => x.id !== u.id);
     db.creds = (db.creds || []).filter(c => c.userId !== u.id);
     db.subs = (db.subs || []).filter(x => x.userId !== u.id);
+    social().relationships = social().relationships.filter(r => r.from !== u.id && r.to !== u.id);
     dropDeviceLinks(db, u.id);
     presence.delete(u.id);
     // The training history and any Coach credential of theirs, both outside db.json.
@@ -2727,7 +2827,7 @@ if (!SERVERLESS) {
 // survive a cold start just like accounts, otherwise a passkey cannot finish on
 // another instance and a password limit can be bypassed by changing instances.
 const runtimeMaps = { challenges, pairings, presence };
-const runtimeLimits = { AUTH_BURST, ADDR_FAILS, ACCOUNT_FAILS, FAIL_AUDIT, FAIL_AUDIT_ALL };
+const runtimeLimits = { AUTH_BURST, ADDR_FAILS, ACCOUNT_FAILS, SOCIAL_LOOKUPS, SOCIAL_ACTIONS, FAIL_AUDIT, FAIL_AUDIT_ALL };
 export function restoreServerless(snapshot) {
   if (!SERVERLESS) throw new Error('Serverless storage is not enabled');
   useDocuments(snapshot.documents);

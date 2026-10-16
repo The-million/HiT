@@ -117,3 +117,85 @@ test('bootstrap invitation is not recreated after use', async () => {
   assert.equal(invites.filter(i => i.code === process.env.BOOTSTRAP_INVITE_CODE).length, 1);
   assert.equal(invites.find(i => i.code === process.env.BOOTSTRAP_INVITE_CODE).usedBy, admin.id);
 });
+
+test('friends: exact lookup, authorizations, crossed and repeated requests', async () => {
+  const invite = await request('POST', '/api/admin/invites/new', { note: 'Third profile' }, adminCookie);
+  const registered = await request('POST', '/api/register/password', {
+    name: 'Charlie', password: 'Charlie-long-test-passphrase!', code: invite.json.invite.code
+  });
+  assert.equal(registered.statusCode, 200, registered.body);
+  const charlie = registered.json.user;
+  const charlieCookie = cookieOf(registered);
+
+  assert.equal((await request('GET', '/api/friends')).statusCode, 401);
+  assert.equal((await request('POST', '/api/friends/lookup', { query: 'Friend' })).statusCode, 401);
+  assert.equal((await request('POST', '/api/friends/request', { targetId: friend.id })).statusCode, 401);
+  const empty = await request('GET', '/api/friends', undefined, adminCookie);
+  assert.equal(empty.json.code, admin.id);
+  assert.deepEqual(empty.json.relationships, []);
+  assert.equal((await request('POST', '/api/friends/lookup', { query: 'Fri' }, adminCookie)).statusCode, 404);
+  assert.equal((await request('POST', '/api/friends/lookup', { query: 'friend' }, adminCookie)).json.user.id, friend.id);
+  assert.equal((await request('POST', '/api/friends/lookup', { query: friend.id }, adminCookie)).json.user.id, friend.id);
+  assert.equal((await request('POST', '/api/friends/request', { targetId: admin.id }, adminCookie)).statusCode, 400);
+
+  const sent = await request('POST', '/api/friends/request', { targetId: friend.id, from: charlie.id }, adminCookie);
+  assert.equal(sent.statusCode, 200, sent.body);
+  const id = sent.json.relationship.id;
+  assert.equal(sent.json.relationship.direction, 'outgoing');
+  assert.deepEqual(Object.keys(sent.json.relationship.user).sort(), ['id', 'name']);
+  assert.equal((await request('POST', '/api/friends/request', { targetId: friend.id }, adminCookie)).json.relationship.id, id);
+  assert.equal((await request('POST', '/api/friends/request', { targetId: admin.id }, friendCookie)).statusCode, 409);
+  assert.equal((await request('POST', '/api/friends/accept', { id }, adminCookie)).statusCode, 403);
+  assert.equal((await request('POST', '/api/friends/accept', { id }, charlieCookie)).statusCode, 404);
+  assert.equal((await request('POST', '/api/friends/cancel', { id }, friendCookie)).statusCode, 403);
+  assert.equal((await request('POST', '/api/friends/decline', { id }, adminCookie)).statusCode, 403);
+  assert.equal((await request('POST', '/api/friends/accept', { id }, friendCookie)).json.relationship.status, 'accepted');
+  assert.equal((await request('POST', '/api/friends/accept', { id }, friendCookie)).statusCode, 200);
+  assert.equal((await request('POST', '/api/friends/request', { targetId: friend.id }, adminCookie)).json.relationship.status, 'accepted');
+  handle = createHandler({ store: createPostgresStore(pool), server });
+  assert.equal((await request('GET', '/api/friends', undefined, friendCookie)).json.relationships[0].user.id, admin.id);
+  assert.equal((await request('GET', '/api/friends', undefined, charlieCookie)).json.relationships.length, 0);
+  assert.equal((await request('POST', '/api/friends/remove', { id }, charlieCookie)).statusCode, 404);
+  assert.equal((await request('POST', '/api/friends/remove', { id }, adminCookie)).statusCode, 200);
+  assert.deepEqual((await request('GET', '/api/friends', undefined, friendCookie)).json.relationships, []);
+
+  const again = await request('POST', '/api/friends/request', { targetId: friend.id }, adminCookie);
+  assert.equal((await request('POST', '/api/friends/decline', { id: again.json.relationship.id }, friendCookie)).statusCode, 200);
+  assert.deepEqual((await request('GET', '/api/friends', undefined, adminCookie)).json.relationships, []);
+  const third = await request('POST', '/api/friends/request', { targetId: friend.id }, adminCookie);
+  assert.equal((await request('POST', '/api/friends/cancel', { id: third.json.relationship.id }, adminCookie)).statusCode, 200);
+  assert.deepEqual((await request('GET', '/api/friends', undefined, friendCookie)).json.relationships, []);
+
+  const fromCharlie = await request('POST', '/api/friends/request', { targetId: friend.id }, charlieCookie);
+  assert.equal(fromCharlie.statusCode, 200, fromCharlie.body);
+  assert.equal((await request('POST', '/api/admin/user/disable', { id: charlie.id, disabled: true }, adminCookie)).statusCode, 200);
+  assert.deepEqual((await request('GET', '/api/friends', undefined, friendCookie)).json.relationships, []);
+  assert.equal((await request('GET', '/api/friends', undefined, charlieCookie)).statusCode, 401);
+  assert.equal((await request('POST', '/api/admin/user/disable', { id: charlie.id, disabled: false }, adminCookie)).statusCode, 200);
+  assert.deepEqual((await request('GET', '/api/friends', undefined, charlieCookie)).json.relationships, []);
+  assert.equal((await request('POST', '/api/admin/user/delete', { id: charlie.id }, adminCookie)).statusCode, 200);
+  assert.equal((await request('POST', '/api/friends/lookup', { query: charlie.id }, adminCookie)).statusCode, 404);
+});
+
+test('friends: CSRF and failed transaction leave no relation or false success', async () => {
+  assert.equal((await request('POST', '/api/friends/request', { targetId: friend.id }, adminCookie, { origin: 'https://elsewhere.example' })).statusCode, 403);
+  const failingStore = { transaction: run => store.transaction(async snapshot => { await run(snapshot); throw new Error('rollback'); }) };
+  const failing = createHandler({ store: failingStore, server });
+  const result = await request('POST', '/api/friends/request', { targetId: friend.id }, adminCookie, {}, failing);
+  assert.equal(result.statusCode, 503);
+  assert.deepEqual((await request('GET', '/api/friends', undefined, adminCookie)).json.relationships, []);
+});
+
+test('friends: simultaneous sends create one relationship, and a crossed send does not overwrite it', async () => {
+  const two = await Promise.all([
+    request('POST', '/api/friends/request', { targetId: friend.id }, adminCookie),
+    request('POST', '/api/friends/request', { targetId: friend.id }, adminCookie)
+  ]);
+  assert.deepEqual(two.map(r => r.statusCode), [200, 200]);
+  assert.equal(two[0].json.relationship.id, two[1].json.relationship.id);
+  const crossed = await request('POST', '/api/friends/request', { targetId: admin.id }, friendCookie);
+  assert.equal(crossed.statusCode, 409);
+  assert.equal(crossed.json.code, 'incoming-request');
+  assert.equal((await request('GET', '/api/friends', undefined, friendCookie)).json.relationships.length, 1);
+  assert.equal((await request('POST', '/api/friends/cancel', { id: two[0].json.relationship.id }, adminCookie)).statusCode, 200);
+});

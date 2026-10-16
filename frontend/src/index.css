@@ -287,6 +287,16 @@ h4.sec{
   padding:16px;margin-bottom:12px;
 }
 .card .big{font-size:30px;font-weight:600;letter-spacing:-.026em;line-height:1.1}
+.friend-search,.friend-code{display:flex;align-items:center;gap:8px}
+.friend-search .field{min-width:0;flex:1}
+.friend-search .btn,.friend-code .btn{width:auto;flex:none}
+.friend-code{justify-content:space-between;flex-wrap:wrap}
+.friend-code code{font-size:16px;letter-spacing:.05em;user-select:all;overflow-wrap:anywhere}
+.friend-result{margin-top:14px}
+.friend-row{flex-wrap:wrap}
+.friend-row .grow{flex:1 1 100px}
+.friend-actions{display:flex;flex-wrap:wrap;gap:4px;margin-inline-start:auto}
+.friend-feedback{display:flex;align-items:center;justify-content:space-between;gap:8px}
 
 /* ------------------------------------------------------ inset group list -- */
 .sect{margin-bottom:22px}

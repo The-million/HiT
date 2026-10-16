@@ -141,6 +141,8 @@ tags:
       links, which let another device of the same person add a passkey of its own.
   - name: data
     description: Per-user state sync (the whole app state as one JSON blob)
+  - name: friends
+    description: Exact profile lookup, friendship requests and accepted friendships. Never returns another account's training state.
   - name: push
     description: Web Push (VAPID) subscriptions, rest-timer and test pushes
   - name: activity
@@ -1409,6 +1411,129 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
               example: { error: "credential already registered", code: "credential-exists" }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/friends:
+    get:
+      tags: [friends]
+      summary: List the caller's requests and friends
+      description: >-
+        Returns the caller's friend code (their random account id) and active relationships.
+        Each relationship includes only the other person's id and display name, status,
+        direction, and creation time. Disabled and deleted accounts are excluded.
+      responses:
+        '200':
+          description: The current social list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  relationships:
+                    type: array
+                    items: { $ref: '#/components/schemas/FriendRelationship' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/friends/lookup:
+    post:
+      tags: [friends]
+      summary: Find one active profile by exact display name or friend code
+      description: >-
+        No partial matches or account directory. If multiple active profiles share a name,
+        the caller must use a friend code. Limited to 20 lookups per minute per account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string, maxLength: 80 }
+      responses:
+        '200':
+          description: One matching profile and any existing relationship with the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/FriendProfile' }
+                  relationship:
+                    oneOf:
+                      - { $ref: '#/components/schemas/FriendRelationship' }
+                      - { type: 'null' }
+        '400': { description: Empty or too-long query. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: No matching active profile. }
+        '409': { description: Several profiles use that display name; use a friend code. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/friends/request:
+    post:
+      tags: [friends]
+      summary: Send a friendship request
+      description: >-
+        The authenticated account is always the sender. Repeating the same request returns
+        its current relationship. A crossed request is refused so its recipient can accept
+        the incoming request. Limited to 30 actions per minute and 25 outgoing pending requests.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetId]
+              properties:
+                targetId: { type: string, description: The other account's friend code/id. }
+      responses:
+        '200': { description: Pending or existing relationship. }
+        '400': { description: Cannot invite yourself. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: No active target account. }
+        '409': { description: The target already sent the caller a request. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/friends/accept:
+    post:
+      tags: [friends]
+      summary: Accept a request as its recipient
+      requestBody: { $ref: '#/components/requestBodies/FriendAction' }
+      responses:
+        '200': { description: Accepted relationship; a repeat by the recipient also succeeds. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Only the recipient can accept. }
+        '404': { description: No relationship involving the caller. }
+  /api/friends/decline:
+    post:
+      tags: [friends]
+      summary: Decline a pending request as its recipient
+      requestBody: { $ref: '#/components/requestBodies/FriendAction' }
+      responses:
+        '200': { description: Request removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Only the recipient can decline. }
+        '404': { description: No relationship involving the caller. }
+  /api/friends/cancel:
+    post:
+      tags: [friends]
+      summary: Cancel a pending request as its sender
+      requestBody: { $ref: '#/components/requestBodies/FriendAction' }
+      responses:
+        '200': { description: Request removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Only the sender can cancel. }
+        '404': { description: No relationship involving the caller. }
+  /api/friends/remove:
+    post:
+      tags: [friends]
+      summary: Remove an accepted friend as either participant
+      requestBody: { $ref: '#/components/requestBodies/FriendAction' }
+      responses:
+        '200': { description: Friendship removed for both participants. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: No relationship involving the caller. }
+        '409': { description: The request has not been accepted. }
 
   /api/data:
     get:
@@ -2954,6 +3079,16 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
 
 components:
+  requestBodies:
+    FriendAction:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id]
+            properties:
+              id: { type: string, description: Relationship id from GET /api/friends. }
   securitySchemes:
     cookieAuth:
       type: apiKey
@@ -3099,6 +3234,21 @@ components:
           example: { error: "that code is wrong, used or expired", code: "link-invalid" }
 
   schemas:
+    FriendProfile:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+    FriendRelationship:
+      type: object
+      required: [id, status, direction, user, created]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [pending, accepted] }
+        direction: { type: string, enum: [incoming, outgoing] }
+        user: { $ref: '#/components/schemas/FriendProfile' }
+        created: { type: string, format: date-time }
     Error:
       type: object
       required: [error]
