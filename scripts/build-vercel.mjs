@@ -25,7 +25,7 @@ cpSync(join(root, 'api/node_modules'), join(fn, 'api/node_modules'), {
 });
 writeFileSync(join(fn, '.vc-config.json'), JSON.stringify({
   runtime: 'nodejs22.x', handler: 'api/serverless/entry.js', launcherType: 'Nodejs',
-  shouldAddHelpers: false, maxDuration: 60
+  shouldAddHelpers: false, maxDuration: 60, regions: ['sin1']
 }, null, 2));
 writeFileSync(join(out, 'config.json'), JSON.stringify({
   version: 3,

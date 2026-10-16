@@ -34,3 +34,4 @@ docs/superpowers/plans/
 # Vercel local project metadata and generated deployment
 .vercel/
 .env.*.local
+.env.local

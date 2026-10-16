@@ -10,26 +10,35 @@ Cette version prépare openGym pour un petit groupe d'amis, avec le français pa
 - Catalogue et animations d'exercices inclus dans le déploiement.
 - Coach IA, notifications en arrière-plan et envoi de médias personnels désactivés. Le minuteur à l'écran reste utilisable. Les médias personnels ne sont pas sauvegardés dans le cloud par cette V1.
 
-## 1. Mettre cette version sur ton GitHub
+## Instance du groupe
 
-Le dépôt est cloné localement sur la branche `personnalisation-fr`. Le remote `origin` pointe encore vers le projet original de DuarteSantos8. Crée ton fork GitHub, puis dans ce dossier :
+- Site de production : https://opengym-amis.vercel.app
+- Code source : https://github.com/The-million/openGym
+- Projet Vercel : `opengym-amis`, sur le compte `glodinonde-7955s-projects`.
+- Base Neon : `opengym-amis-db`, offre gratuite, région Singapour (`sin1`), connectée uniquement à Production.
+- Branche de production : `main`. La branche locale de personnalisation est `personnalisation-fr`.
+- Le code du premier compte est conservé uniquement sur ce Mac dans `.vercel/invitation-initiale.txt`, fichier exclu de Git. Aucun secret n'est dans ce guide.
+
+## 1. Publier les modifications suivantes
+
+Le fork GitHub et sa connexion Vercel sont configurés. Après modification et vérification :
 
 ```sh
-git remote rename origin upstream
-git remote add origin https://github.com/TON_COMPTE/openGym.git
-git add .
-git commit -m "Préparer openGym en français pour Vercel et PostgreSQL"
-git push -u origin personnalisation-fr
+git add <fichiers-modifies>
+git commit -m "Décrire la modification"
+git push origin personnalisation-fr
+# Publier en production si main n'a pas divergé :
+git push origin personnalisation-fr:main
 ```
 
-Les fichiers `.env`, `.vercel/` et les données locales sont ignorés. Conserve les mentions de licence du projet et le code source de cette version dans ton fork.
+Les mises à jour de `main` déclenchent le déploiement Vercel. Les fichiers `.env`, `.env.local`, `.vercel/` et les données locales sont ignorés. Les étapes suivantes restent utiles pour recréer l'instance.
 
 ## 2. Importer dans Vercel
 
 1. **Add New → Project → Import Git Repository**, puis sélectionner ton fork.
 2. **Root Directory : racine du dépôt**, pas `frontend` ni `api`.
 3. **Framework Preset : Other**. Node.js **22.x**. Le fichier `vercel.json` définit déjà l'installation et la compilation ; ne pas ajouter d'Output Directory manuellement.
-4. Utiliser `personnalisation-fr` comme branche de production, ou fusionner cette branche dans `main` et utiliser `main`.
+4. Utiliser `main` comme branche de production.
 5. Choisir le nom du projet et relever son adresse de production stable, par exemple `https://mon-groupe-gym.vercel.app`.
 
 Un premier déploiement sans configuration peut afficher l'interface, mais l'API répondra 503 jusqu'aux étapes suivantes. Ce n'est pas encore une instance prête à utiliser.
