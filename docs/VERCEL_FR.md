@@ -12,9 +12,9 @@ Cette version prépare openGym pour un petit groupe d'amis, avec le français pa
 
 ## Instance du groupe
 
-- Site de production : https://opengym-amis.vercel.app
+- Site de production : https://opengym-the-million.vercel.app
 - Code source : https://github.com/The-million/openGym
-- Projet Vercel : `opengym-amis`, sur le compte `glodinonde-7955s-projects`.
+- Projet Vercel : `opengym-the-million`, sur le compte `glodinonde-7955s-projects`.
 - Base Neon : `opengym-amis-db`, offre gratuite, région Singapour (`sin1`), connectée uniquement à Production.
 - Branche de production : `main`. La branche locale de personnalisation est `personnalisation-fr`.
 - Le code du premier compte est conservé uniquement sur ce Mac dans `.vercel/invitation-initiale.txt`, fichier exclu de Git. Aucun secret n'est dans ce guide.
