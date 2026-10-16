@@ -1,7 +1,7 @@
 {
-  "name": "openGym",
-  "short_name": "openGym",
-  "description": "Suivi de musculation, des séances et du poids",
+  "name": "HiT",
+  "short_name": "HiT",
+  "description": "HiT — tes séances, tes programmes, ta progression.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -9,7 +9,12 @@
   "background_color": "#0c0e12",
   "theme_color": "#0c0e12",
   "icons": [
-    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
-  ]
+    {
+      "src": "brand/hit-icon.png",
+      "sizes": "1254x1254",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "id": "./"
 }

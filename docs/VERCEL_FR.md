@@ -1,6 +1,6 @@
-# openGym pour notre groupe — Vercel + Neon
+# HiT — Vercel + Neon
 
-Cette version prépare openGym pour un petit groupe d'amis, avec le français par défaut. L'interface et l'API tournent sur Vercel ; PostgreSQL conserve les comptes et les séances. Neon se crée depuis le tableau de bord Vercel : aucun serveur Docker à administrer.
+HiT est une adaptation d’openGym pour un petit groupe d’amis, avec le français par défaut. L'interface et l'API tournent sur Vercel ; PostgreSQL conserve les comptes et les séances. Neon se crée depuis le tableau de bord Vercel : aucun serveur Docker à administrer.
 
 ## Ce que contient la V1
 
@@ -12,9 +12,9 @@ Cette version prépare openGym pour un petit groupe d'amis, avec le français pa
 
 ## Instance du groupe
 
-- Site de production : https://opengym-the-million.vercel.app
-- Code source : https://github.com/The-million/openGym
-- Projet Vercel : `opengym-the-million`, sur le compte `glodinonde-7955s-projects`.
+- Site de production : https://hit-the-million.vercel.app
+- Code source : https://github.com/The-million/HiT
+- Projet Vercel : `hit-the-million`, sur le compte `glodinonde-7955s-projects`.
 - Base Neon : `opengym-amis-db`, offre gratuite, région Singapour (`sin1`), connectée uniquement à Production.
 - Branche de production : `main`. La branche locale de personnalisation est `personnalisation-fr`.
 - Le code du premier compte est conservé uniquement sur ce Mac dans `.vercel/invitation-initiale.txt`, fichier exclu de Git. Aucun secret n'est dans ce guide.

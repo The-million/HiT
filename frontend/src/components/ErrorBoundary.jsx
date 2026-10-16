@@ -15,7 +15,7 @@ import { Button } from './ui.jsx'
 export default class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { failed: false } }
   static getDerivedStateFromError() { return { failed: true } }
-  componentDidCatch(err) { console.error('openGym render error:', err) }
+  componentDidCatch(err) { console.error('HiT render error:', err) }
 
   render() {
     if (!this.state.failed) return this.props.children
