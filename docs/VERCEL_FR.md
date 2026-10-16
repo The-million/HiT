@@ -107,7 +107,7 @@ Ce choix vise un petit groupe : le document complet est lu et réécrit par requ
 
 Les sauvegardes de l'instance se font côté PostgreSQL/Neon, plus les exports JSON personnels dans l'application. Le dossier Docker `data/` n'est pas utilisé par le déploiement Vercel. Une ancienne instance Docker nécessite une migration explicite ; cette V1 démarre avec une base vide.
 
-Le déploiement réel, les passkeys sur téléphone et les accès à Neon devront être vérifiés après configuration du compte Vercel. Les tests locaux ne remplacent pas cette vérification.
+Le déploiement réel et les accès à Neon ont été vérifiés le 16 octobre 2026. La première création de compte reste à faire par le propriétaire avec son invitation privée ; les passkeys sur téléphone et la synchronisation d'une vraie séance entre deux appareils restent à valider avec ce compte. Le tableau de bord d'administration conserve pour cette V1 les libellés anglais du projet original.
 
 ### Vérifications effectuées sur cette version
 
@@ -115,5 +115,7 @@ Le déploiement réel, les passkeys sur téléphone et les accès à Neon devron
 - Import de la fonction empaquetée vérifié sans écoute de port ni dossier de données accessible en écriture.
 - 25 tests API ciblés réussis, dont 9 scénarios PostgreSQL/Vercel ; 14 tests de langue réussis.
 - Suite API complète comparée au commit original `e348fc17` : 10 échecs également présents dans l'original, autour du coach IA désactivé pour cette V1. Le test de durabilité affecté par la nouvelle abstraction a été adapté et repasse.
-- Configuration française vérifiée via HTTP en local. Aucun navigateur automatisable n'était disponible pour une vérification visuelle.
-- Pas encore de déploiement réel sur Vercel ni de test contre une base Neon distante.
+- Déploiement de production Vercel réussi, avec une seule fonction dans l'offre Hobby.
+- En production : `/api/health` répond 200 avec `ok: true` et `writable: true` ; `/api/config` confirme le français, les invitations obligatoires, les mots de passe et l'absence de mode invité. Les données sans connexion répondent 401.
+- Écran de connexion français vérifié visuellement dans Chrome sur le domaine public.
+- Base Neon réelle : connexion, écritures concurrentes et rollback testés dans un schéma temporaire séparé, supprimé après vérification. Aucun compte de test créé dans l'instance de production.
