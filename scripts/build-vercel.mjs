@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const out = join(root, '.vercel/output');
+// Vercel builds from deployment/ so its automatic /api discovery never treats
+// the upstream server's internal modules as independent public functions.
+const out = resolve('.vercel/output');
 const fn = join(out, 'functions/api/index.func');
 const run = (args, cwd = root, env = process.env) => execFileSync(process.execPath, args, { cwd, env, stdio: 'inherit' });
 // Dependencies are installed by Vercel's installCommand. No secrets are read or

@@ -36,8 +36,8 @@ Les mises à jour de `main` déclenchent le déploiement Vercel. Les fichiers `.
 ## 2. Importer dans Vercel
 
 1. **Add New → Project → Import Git Repository**, puis sélectionner ton fork.
-2. **Root Directory : racine du dépôt**, pas `frontend` ni `api`.
-3. **Framework Preset : Other**. Node.js **22.x**. Le fichier `vercel.json` définit déjà l'installation et la compilation ; ne pas ajouter d'Output Directory manuellement.
+2. **Root Directory : `deployment`**, avec **Include source files outside of the Root Directory in the Build Step** activé. Cela évite que Vercel transforme les modules internes du dossier `api` en fonctions indépendantes.
+3. **Framework Preset : Other**. Node.js **22.x**. Le fichier `deployment/vercel.json` définit déjà l'installation et la compilation ; ne pas ajouter d'Output Directory manuellement.
 4. Utiliser `main` comme branche de production.
 5. Choisir le nom du projet et relever son adresse de production stable, par exemple `https://mon-groupe-gym.vercel.app`.
 
