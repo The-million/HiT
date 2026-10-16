@@ -4,9 +4,11 @@ HiT est une adaptation d’openGym pour un petit groupe d’amis, avec le franç
 
 ## Ce que contient la V1
 
-- Comptes par mot de passe ou passkey, profils séparés, invitations à usage unique.
+- Comptes par mot de passe ou passkey, profils séparés, invitations à usage unique. Le mot de passe doit contenir au moins 8 caractères ; les mots de passe courants restent refusés.
 - Premier compte administrateur protégé par une invitation initiale.
 - Programmes, séances, historique, poids, statistiques et synchronisation entre appareils.
+- Demandes d’amitié par pseudo exact ou code ami, acceptation et retrait d’amis.
+- Partage manuel et révocable d’une séance depuis le résumé ou l’historique ; fil des amis et progrès calculés uniquement à partir des séances partagées.
 - Catalogue et animations d'exercices inclus dans le déploiement.
 - Coach IA, notifications en arrière-plan et envoi de médias personnels désactivés. Le minuteur à l'écran reste utilisable. Les médias personnels ne sont pas sauvegardés dans le cloud par cette V1.
 
@@ -84,6 +86,24 @@ Lancer **Redeploy** après la connexion à Neon et l'ajout des variables. Utilis
 4. Chacun crée son propre compte et enregistre ses propres séances.
 5. Vérifier une séance sur un second appareil connecté au même compte avant de partager plus largement.
 
+### Parcours Amis et partage
+
+1. Chaque personne crée son compte avec son propre code d’invitation. Dans **Amis**, rechercher le pseudo exact ou saisir le code ami, puis accepter la demande sur l’autre compte.
+2. Après une séance terminée, ou depuis son historique, choisir **Partager avec les amis** et confirmer. Le partage est volontaire pour chaque séance.
+3. L’ami accepté ouvre **Amis** pour voir le fil, puis **Voir** pour consulter le profil et les progrès partagés. Les statistiques sociales ne comptent pas les séances privées.
+4. **Retirer le partage** rend la séance inaccessible aux amis. Supprimer la séance source ou retirer l’ami coupe aussi l’accès, y compris par un ancien lien direct.
+
+Les notes, le poids corporel et les médias personnels ne sont jamais envoyés dans les réponses sociales. Les amis voient la version actuelle des champs publiables : titre, date, durée, exercices et séries terminées. Une modification de la séance apparaît donc dans sa vue partagée.
+
+### Contrôle de la première version sur les appareils du groupe
+
+- Sur téléphone puis ordinateur, ouvrir une séance du même compte, actualiser la page et vérifier que programmes, historique et statistiques restent présents après reconnexion.
+- Pendant une séance, vérifier la validation des séries et le minuteur de repos ; après la fin, vérifier l’historique et la sauvegarde/export des données.
+- Installer HiT depuis le menu du navigateur sur l’écran d’accueil, puis vérifier que l’application s’ouvre sur la même adresse et retrouve la session.
+- Avec deux comptes amis, vérifier le fil, le profil, la révocation et l’accès refusé à une séance privée ou supprimée après actualisation.
+
+Ces contrôles sur de vrais appareils et comptes appartiennent au propriétaire ; les tests automatisés utilisent une base isolée.
+
 Le code initial est consommé une seule fois. Les invitations utilisées ne sont pas recréées à chaque démarrage. Comme dans openGym d'origine, l'administrateur peut consulter les profils et historiques depuis le tableau de bord.
 
 ## Développement et validation
@@ -107,7 +127,7 @@ Ce choix vise un petit groupe : le document complet est lu et réécrit par requ
 
 Les sauvegardes de l'instance se font côté PostgreSQL/Neon, plus les exports JSON personnels dans l'application. Le dossier Docker `data/` n'est pas utilisé par le déploiement Vercel. Une ancienne instance Docker nécessite une migration explicite ; cette V1 démarre avec une base vide.
 
-Le déploiement réel et les accès à Neon ont été vérifiés le 16 octobre 2026. La première création de compte reste à faire par le propriétaire avec son invitation privée ; les passkeys sur téléphone et la synchronisation d'une vraie séance entre deux appareils restent à valider avec ce compte. Le tableau de bord d'administration conserve pour cette V1 les libellés anglais du projet original.
+Le déploiement réel et les accès à Neon ont été vérifiés le 16 octobre 2026. La navigation et les routes sociales sont en production. Le parcours complet avec deux vrais comptes et la synchronisation d’une séance entre téléphone et ordinateur restent à valider par le propriétaire ; les tests automatisés utilisent des comptes isolés et ne modifient pas ses séances. Le tableau de bord d’administration conserve pour cette V1 les libellés anglais du projet original.
 
 ### Vérifications effectuées sur cette version
 

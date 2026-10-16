@@ -38,11 +38,11 @@ export default function FriendProfile() {
   return <div className="narrow">
     <div className="hdr"><button className="iconbtn" onClick={() => nav('/friends')} aria-label={t('Friends')}><Icon name="chevronLeft" /></button>
       <div style={{ flex: 1, marginInlineStart: 12 }}><h1>{data?.user.name || t('Friend profile')}</h1><div className="sub">{t('Shared progress')}</div></div>
-      <button className="iconbtn" onClick={load} disabled={loading} aria-label={t('Refresh friends')}><Icon name="reset" /></button>
+      <button className="iconbtn" onClick={load} disabled={loading} aria-label={t('Refresh shared progress')}><Icon name="reset" /></button>
     </div>
     {loading ? <div className="empty" role="status">{t('Loading shared workouts…')}</div> : error ? <div className="card friend-feedback" role="alert">{error}</div> : data && <>
       <div className="card"><h2>{t('Activity in the last 8 weeks')}</h2>
-        <div className="shared-week-chart" role="img" aria-label={t('Shared workouts by week')}>
+        <div className="shared-week-chart" role="img" aria-label={t('Shared workouts by week') + ': ' + weeks.map(w => t('{0} shared workouts in the week of {1}', w.count, w.start)).join(', ')}>
           {weeks.map(week => <div className="shared-week" key={week.start} title={t('{0} shared workouts in the week of {1}', week.count, week.start)}>
             <span className="small">{week.count}</span>
             <span className="shared-week-bar" style={{ height: 8 + week.count / max * 58 }} />

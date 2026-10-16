@@ -10,6 +10,7 @@ export default {
   'Shared progress': 'Progrès partagés',
   'Activity in the last 8 weeks': 'Activité des 8 dernières semaines',
   'Shared workouts by week': 'Séances partagées par semaine',
+  'Refresh shared progress': 'Actualiser les progrès partagés',
   '{0} shared workouts in the week of {1}': '{0} séances partagées pendant la semaine du {1}',
   'Only shared workouts count toward these figures.': 'Ces chiffres ne comptent que les séances partagées.',
   'Performance in shared workouts': 'Performances dans les séances partagées',

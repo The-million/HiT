@@ -959,10 +959,10 @@ export function detailTags(ex) {
     out.push({ key: out.length, label, ...extra })
     return true
   }
-  add(t(ex.bp), { acc: true })
+  if (ex.bp) add(t(ex.bp), { acc: true })
   if (ex.bp === 'cardio') add(t(MUSCLE_NAME['cardiovascular system']), { icon: 'figureStrength' })
   else for (const s of (ex.primaries?.length ? ex.primaries : (ex.tg ? [ex.tg] : [])).filter(trainedBy(ex))) add(t(MUSCLE_NAME[s] || s), { icon: 'figureStrength' })
-  add(t(ex.eq), { icon: 'kettlebell' })
+  if (ex.eq) add(t(ex.eq), { icon: 'kettlebell' })
   let helpers = 0
   for (const s of (ex.secondaries?.length ? ex.secondaries : smOf(ex)).filter(trainedBy(ex))) {
     if (helpers >= 3) break
@@ -1771,7 +1771,8 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
         turns into a translatable label. */}
     <div className="row" style={{ gap: 6, flexWrap: 'wrap', margin: '10px 0 14px' }}>
       {cardio && <span className="tag acc"><Icon name="figureRun" />{t('Cardio')}</span>}
-      <span className="tag">{t(MUSCLE_NAME[ex.tg] || ex.tg || ex.bp)}</span><span className="tag">{t(ex.eq)}</span>
+      {(ex.tg || ex.bp) && <span className="tag">{t(MUSCLE_NAME[ex.tg] || ex.tg || ex.bp)}</span>}
+      {ex.eq && <span className="tag">{t(ex.eq)}</span>}
       {!cardio && (ex.secondaries?.length ? ex.secondaries : smOf(ex)).filter(trainedBy(ex)).slice(0, 3)
         .map((s, i) => <span key={i} className="tag dim">{t(MUSCLE_NAME[s] || s)}</span>)}
     </div>

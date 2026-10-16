@@ -18,7 +18,7 @@ import { Row, Button } from './ui.jsx'
 
 // The server's floor (api/password.js MIN_LENGTH), checked here first so the common mistake is
 // answered without a round trip. The server still decides.
-export const MIN_PASSWORD = 10
+export const MIN_PASSWORD = 8
 export const passwordOn = config => !!config?.password_login
 // An address the way the server stores and compares it (nameKey in api/password.js): NFKC,
 // trimmed, lower-cased.

@@ -16,7 +16,7 @@
  * memory limit by a burst of logins. */
 import crypto from 'node:crypto';
 
-export const MIN_LENGTH = 10;
+export const MIN_LENGTH = 8;
 // Long passphrases are the point, so the cap is only there to bound the work: scrypt runs its
 // input through PBKDF2 first, and a 5 MiB "password" would be hashed in full.
 export const MAX_LENGTH = 256;
@@ -143,8 +143,7 @@ export const maskEmail = e => {
 
 /* ------------------------------------------------------------------ policy ----------------
    Length first, which is what actually matters; then a short list of the passwords every
-   guessing script tries first. The list only has to hold entries of MIN_LENGTH or more — the
-   rest are already too short — plus the stems people pad with digits and a "!" to get past a
+   guessing script tries first, plus the stems people pad with digits and a "!" to get past a
    length rule. A leaked-password database would be better and is deliberately not bundled:
    it is megabytes, and an instance that locks an account after a handful of wrong guesses is
    not where the long tail of that list gets tried. */
@@ -181,12 +180,13 @@ export function passwordProblem(pw, name) {
   if (len > MAX_LENGTH) return 'too-long';
   const low = normalize(pw).toLowerCase();
   if (new Set(low).size <= 2) return 'too-common';          // "aaaaaaaaaa", "abababababab"
+  if (/^\d{8,9}$/.test(low)) return 'too-common';            // short numeric PINs
   if (COMMON.has(low)) return 'too-common';
   // Letters of any script count as the stem; what a length rule gets padded with does not.
   const stem = low.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
   if (STEMS.has(stem)) return 'too-common';                   // "Password123!", "qwerty.2024"
   const n = nameKey(name);
-  if (n.length >= 3 && stem === n) return 'too-common';       // "ana.2024.2024"
+  if (n.length >= 3 && low === n) return 'too-common';        // just the profile name
   return null;
 }
 

@@ -733,7 +733,7 @@ paths:
               required: [name, password]
               properties:
                 name: { type: string, maxLength: 40 }
-                password: { type: string, minLength: 10, maxLength: 256 }
+                password: { type: string, minLength: 8, maxLength: 256 }
                 code: { type: string, description: Invite code (INVITE_ONLY only). }
                 email: { type: string, maxLength: 254, description: Optional sign-in e-mail. }
             example: { name: "Ada", password: "correct horse battery staple", code: "3F9C21A07B54D688" }
@@ -752,7 +752,7 @@ paths:
                   user: { $ref: '#/components/schemas/SessionUser' }
         '400':
           description: >-
-            The password breaks the policy with `too-short` (under 10 characters), `too-long`
+            The password breaks the policy with `too-short` (under 8 characters), `too-long`
             (over 256) or `too-common`; a field is `missing`; or `email-invalid`: the
             `email` given is not an e-mail address.
           content:
@@ -3302,7 +3302,7 @@ components:
           example: { error: "the server is busy, try again in a moment", code: "busy" }
     PasswordPolicy:
       description: >-
-        The new password breaks the policy (`too-short` under 10 characters,
+        The new password breaks the policy (`too-short` under 8 characters,
         `too-long` over 256, or `too-common`), or a field is `missing`.
       content:
         application/json:
