@@ -199,3 +199,108 @@ test('friends: simultaneous sends create one relationship, and a crossed send do
   assert.equal((await request('GET', '/api/friends', undefined, friendCookie)).json.relationships.length, 1);
   assert.equal((await request('POST', '/api/friends/cancel', { id: two[0].json.relationship.id }, adminCookie)).statusCode, 200);
 });
+
+test('manual workout shares expose only completed public fields to accepted friends and revoke every access path', async () => {
+  const invite = await request('POST', '/api/admin/invites/new', { note: 'Share privacy test' }, adminCookie);
+  const registered = await request('POST', '/api/register/password', {
+    name: 'Outside', password: 'Outside-long-test-passphrase!', code: invite.json.invite.code
+  });
+  assert.equal(registered.statusCode, 200, registered.body);
+  const outsider = registered.json.user;
+  const outsiderCookie = cookieOf(registered);
+  const direct = cookie => request('GET', `/api/friends/workout?ownerId=${admin.id}&workoutId=w1`, undefined, cookie);
+  const profile = cookie => request('GET', `/api/friends/profile?id=${admin.id}`, undefined, cookie);
+  const source = async (workouts, extra = {}) => {
+    const before = (await request('GET', '/api/data', undefined, adminCookie)).json;
+    return request('PUT', '/api/data', {
+      state: { ...before.state, ...extra, workouts }, baseRev: before.rev
+    }, adminCookie);
+  };
+  const workout = weight => ({
+    id: 'w1', d: '2026-10-16', start: 1000, end: 61000, name: 'Push day',
+    note: 'PRIVATE_WORKOUT_NOTE', bw: 87, media: ['PRIVATE_MEDIA'],
+    entries: [{ id: 'custom1', note: 'PRIVATE_ENTRY_NOTE', sets: [
+      { done: true, w: weight, r: 8, note: 'PRIVATE_SET_NOTE' },
+      { done: false, w: 999, r: 12, note: 'PRIVATE_UNFINISHED' }
+    ] }]
+  });
+  assert.equal((await source([workout(40), { id: 'w2', d: '2026-10-16', entries: [{ id: 'custom1', sets: [{ done: true, w: 999, r: 1 }] }] }], {
+    customEx: [{ id: 'custom1', n: 'Demo lift', note: 'PRIVATE_EXERCISE_NOTE' }], unit: 'kg'
+  })).statusCode, 200);
+  assert.equal((await request('GET', '/api/shares')).statusCode, 401);
+  assert.equal((await request('GET', '/api/friends/feed')).statusCode, 401);
+  assert.equal((await direct()).statusCode, 401);
+  assert.equal((await request('POST', '/api/shares/publish', { workoutId: 'w1' })).statusCode, 401);
+  assert.equal((await request('POST', '/api/shares/publish', { workoutId: 'w1' }, outsiderCookie)).statusCode, 404);
+  assert.equal((await request('POST', '/api/shares/publish', { workoutId: 'w1' }, adminCookie,
+    { origin: 'https://elsewhere.example' })).statusCode, 403);
+
+  const published = await request('POST', '/api/shares/publish', { workoutId: 'w1', ownerId: outsider.id }, adminCookie);
+  assert.equal(published.statusCode, 200, published.body);
+  assert.equal((await request('POST', '/api/shares/publish', { workoutId: 'w1' }, adminCookie)).json.share.publishedAt, published.json.share.publishedAt);
+  assert.equal((await direct(friendCookie)).statusCode, 404);
+  assert.equal((await profile(friendCookie)).statusCode, 404);
+  assert.deepEqual((await request('GET', '/api/friends/feed', undefined, friendCookie)).json.workouts, []);
+  const sent = await request('POST', '/api/friends/request', { targetId: friend.id }, adminCookie);
+  assert.equal((await direct(friendCookie)).statusCode, 404);
+  assert.equal((await request('POST', '/api/friends/accept', { id: sent.json.relationship.id }, friendCookie)).statusCode, 200);
+
+  const visible = await direct(friendCookie);
+  assert.equal(visible.statusCode, 200, visible.body);
+  assert.deepEqual(Object.keys(visible.json.workout).sort(), ['date', 'durationMs', 'entries', 'id', 'title', 'truncated', 'unit']);
+  assert.deepEqual(visible.json.workout.entries, [{ id: 'custom1', name: 'Demo lift', sets: [{ w: 40, r: 8 }] }]);
+  assert.equal(visible.json.workout.durationMs, 60000);
+  assert.deepEqual(Object.keys(visible.json.owner).sort(), ['id', 'name']);
+  assert.doesNotMatch(visible.body, /PRIVATE_|999/);
+  const feed = await request('GET', '/api/friends/feed', undefined, friendCookie);
+  assert.equal(feed.json.workouts.length, 1);
+  assert.doesNotMatch(feed.body, /PRIVATE_|999/);
+  const progress = await profile(friendCookie);
+  assert.equal(progress.json.workouts.length, 1);
+  assert.equal(progress.json.progress.exercises[0].best, 40);
+  assert.equal(progress.json.progress.exercises[0].sessions, 1);
+  assert.equal(progress.json.progress.weeks.reduce((n, w) => n + w.count, 0), 1);
+  assert.doesNotMatch(progress.body, /PRIVATE_|999/);
+  assert.equal((await direct(outsiderCookie)).statusCode, 404);
+  assert.equal((await profile(outsiderCookie)).statusCode, 404);
+  assert.equal((await request('POST', '/api/shares/revoke', { workoutId: 'w1' }, outsiderCookie)).statusCode, 404);
+
+  assert.equal((await source([workout(45)])).statusCode, 200);
+  assert.equal((await direct(friendCookie)).json.workout.entries[0].sets[0].w, 45);
+  assert.equal((await profile(friendCookie)).json.progress.exercises[0].best, 45);
+  const failingStore = { transaction: run => store.transaction(async snapshot => { await run(snapshot); throw new Error('rollback'); }) };
+  const failing = createHandler({ store: failingStore, server });
+  assert.equal((await request('POST', '/api/shares/revoke', { workoutId: 'w1' }, adminCookie, {}, failing)).statusCode, 503);
+  assert.equal((await direct(friendCookie)).statusCode, 200);
+  handle = createHandler({ store: createPostgresStore(pool), server });
+  assert.equal((await direct(friendCookie)).statusCode, 200);
+  assert.equal((await request('POST', '/api/shares/revoke', { workoutId: 'w1' }, adminCookie)).statusCode, 200);
+  assert.equal((await direct(friendCookie)).statusCode, 404);
+  assert.deepEqual((await request('GET', '/api/friends/feed', undefined, friendCookie)).json.workouts, []);
+  assert.equal((await request('POST', '/api/shares/publish', { workoutId: 'w1' }, adminCookie)).statusCode, 200);
+  assert.equal((await request('POST', '/api/friends/remove', { id: sent.json.relationship.id }, friendCookie)).statusCode, 200);
+  assert.equal((await direct(friendCookie)).statusCode, 404);
+  assert.equal((await profile(friendCookie)).statusCode, 404);
+  const reSent = await request('POST', '/api/friends/request', { targetId: friend.id }, adminCookie);
+  assert.equal((await request('POST', '/api/friends/accept', { id: reSent.json.relationship.id }, friendCookie)).statusCode, 200);
+  assert.equal((await direct(friendCookie)).statusCode, 200);
+  assert.equal((await source([])).statusCode, 200);
+  assert.equal((await direct(friendCookie)).statusCode, 404);
+  assert.deepEqual((await request('GET', '/api/shares', undefined, adminCookie)).json.shares, []);
+  assert.equal((await source([workout(60)])).statusCode, 200);
+  assert.equal((await direct(friendCookie)).statusCode, 404);
+  assert.equal((await request('POST', '/api/admin/user/disable', { id: friend.id, disabled: true }, adminCookie)).statusCode, 200);
+  assert.equal((await direct(friendCookie)).statusCode, 401);
+  assert.equal((await request('PUT', '/api/data', { state: {
+    workouts: [{ id: 'outside-w', d: '2026-10-16', entries: [{ id: 'custom1', sets: [{ done: true, w: 20, r: 5 }] }] }]
+  }, baseRev: 0 }, outsiderCookie)).statusCode, 200);
+  const outsideRequest = await request('POST', '/api/friends/request', { targetId: admin.id }, outsiderCookie);
+  assert.equal((await request('POST', '/api/friends/accept', { id: outsideRequest.json.relationship.id }, adminCookie)).statusCode, 200);
+  assert.equal((await request('POST', '/api/shares/publish', { workoutId: 'outside-w' }, outsiderCookie)).statusCode, 200);
+  const outsideDirect = () => request('GET', `/api/friends/workout?ownerId=${outsider.id}&workoutId=outside-w`, undefined, adminCookie);
+  assert.equal((await outsideDirect()).statusCode, 200);
+  assert.equal((await request('POST', '/api/admin/user/disable', { id: outsider.id, disabled: true }, adminCookie)).statusCode, 200);
+  assert.equal((await outsideDirect()).statusCode, 404);
+  const saved = (await db.query('SELECT payload FROM opengym_instance WHERE id = 1')).rows[0].payload;
+  assert.equal(JSON.parse(saved.documents['db.json']).social.shares.some(s => s.ownerId === outsider.id), false);
+});

@@ -1535,6 +1535,107 @@ paths:
         '404': { description: No relationship involving the caller. }
         '409': { description: The request has not been accepted. }
 
+  /api/shares:
+    get:
+      tags: [friends]
+      summary: List workouts manually published by the signed-in account
+      responses:
+        '200':
+          description: Existing publications whose source workout still exists.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shares:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        workoutId: { type: string }
+                        publishedAt: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/shares/publish:
+    post:
+      tags: [friends]
+      summary: Publish one saved workout to accepted friends
+      description: >-
+        Idempotent. The caller must own the saved workout. The shared view reads its current
+        sanitized version; edits therefore appear immediately. Existing and future accepted
+        friends can view it until revocation, source deletion or friendship removal.
+      requestBody: { $ref: '#/components/requestBodies/WorkoutShareAction' }
+      responses:
+        '200': { description: Publication and timestamp. }
+        '400': { description: Invalid workout id. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: No saved workout with that id. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/shares/revoke:
+    post:
+      tags: [friends]
+      summary: Revoke one of the caller's workout publications
+      requestBody: { $ref: '#/components/requestBodies/WorkoutShareAction' }
+      responses:
+        '200': { description: Publication removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: No publication owned by the caller with that id. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/friends/feed:
+    get:
+      tags: [friends]
+      summary: Fifty most recently published workouts of accepted friends
+      description: Returns only whitelisted workout fields and each owner's id and name.
+      responses:
+        '200':
+          description: Published workouts of current accepted friends.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workouts:
+                    type: array
+                    items: { $ref: '#/components/schemas/SharedWorkout' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/friends/profile:
+    get:
+      tags: [friends]
+      summary: Shared workouts and derived progress for one accepted friend
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Profile, up to 100 shared workouts, and progress derived only from them. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: No accepted friendship with that active account. }
+  /api/friends/workout:
+    get:
+      tags: [friends]
+      summary: Current sanitized version of one published workout
+      parameters:
+        - in: query
+          name: ownerId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: workoutId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Sanitized workout and owner profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workout: { $ref: '#/components/schemas/SharedWorkout' }
+                  owner: { $ref: '#/components/schemas/FriendProfile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: No accepted friendship, publication, or source workout. }
+
   /api/data:
     get:
       tags: [data]
@@ -3080,6 +3181,15 @@ paths:
 
 components:
   requestBodies:
+    WorkoutShareAction:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [workoutId]
+            properties:
+              workoutId: { type: string, maxLength: 120 }
     FriendAction:
       required: true
       content:
@@ -3234,6 +3344,35 @@ components:
           example: { error: "that code is wrong, used or expired", code: "link-invalid" }
 
   schemas:
+    SharedWorkout:
+      type: object
+      description: A strict projection of the owner's current workout; private state fields are omitted.
+      properties:
+        id: { type: string }
+        title: { type: string }
+        date: { type: string, format: date }
+        durationMs: { type: [number, 'null'] }
+        unit: { type: string, enum: [kg, lb] }
+        publishedAt: { type: string, format: date-time }
+        truncated: { type: boolean, description: The workout exceeded the projection limits. }
+        owner: { $ref: '#/components/schemas/FriendProfile' }
+        entries:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              sets:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    side: { type: string, enum: [L, R] }
+                    w: { type: number }
+                    r: { type: number }
+                    min: { type: number }
+                    sec: { type: number }
     FriendProfile:
       type: object
       required: [id, name]

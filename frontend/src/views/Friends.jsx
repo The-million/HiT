@@ -6,6 +6,7 @@ import { useStore } from '../store/useStore.js'
 import { confirmSheet } from '../sheets.jsx'
 import { Button, TextField } from '../components/ui.jsx'
 import Icon from '../components/Icon.jsx'
+import SharedWorkoutCard from '../components/SharedWorkoutCard.jsx'
 
 const post = (path, body) => api('/api/friends/' + path, { method: 'POST', body: JSON.stringify(body) })
 
@@ -23,6 +24,8 @@ export default function Friends() {
   const nav = useNavigate()
   const user = useStore(s => s.user)
   const [data, setData] = useState(null)
+  const [feed, setFeed] = useState([])
+  const [feedError, setFeedError] = useState('')
   const [query, setQuery] = useState('')
   const [found, setFound] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -35,11 +38,16 @@ export default function Friends() {
     const next = await api('/api/friends')
     setData(next)
     setFound(prev => prev ? { ...prev, relationship: next.relationships.find(r => r.user.id === prev.user.id) || null } : null)
+    try { setFeed((await api('/api/friends/feed')).workouts); setFeedError('') }
+    catch { setFeedError(t('Could not load shared workouts. Refresh to try again.')) }
   }
   useEffect(() => {
-    if (!user) { setLoading(false); return }
+    setData(null); setFeed([]); setFeedError(''); setFound(null); setLoading(!!user)
+    if (!user) return
     let live = true
     api('/api/friends').then(next => { if (live) setData(next) }).catch(e => { if (live) setError(messageFor(e)) }).finally(() => { if (live) setLoading(false) })
+    api('/api/friends/feed').then(next => { if (live) setFeed(next.workouts) })
+      .catch(() => { if (live) setFeedError(t('Could not load shared workouts. Refresh to try again.')) })
     return () => { live = false }
   }, [user?.id])
 
@@ -95,7 +103,10 @@ export default function Friends() {
         <Button size="xs" variant="ghost" disabled={busy} onClick={() => act('decline', relationship)}>{t('Decline')}</Button>
       </>}
       {relationship?.status === 'pending' && relationship.direction === 'outgoing' && <Button size="xs" variant="ghost" disabled={busy} onClick={() => act('cancel', relationship)}>{t('Cancel')}</Button>}
-      {relationship?.status === 'accepted' && <Button size="xs" variant="ghost" disabled={busy} onClick={() => remove(relationship)}>{t('Remove')}</Button>}
+      {relationship?.status === 'accepted' && <>
+        <Button size="xs" variant="tinted" onClick={() => nav('/friends/' + encodeURIComponent(person.id))}>{t('View')}</Button>
+        <Button size="xs" variant="ghost" disabled={busy} onClick={() => remove(relationship)}>{t('Remove')}</Button>
+      </>}
     </div>
   </div>
 
@@ -123,6 +134,10 @@ export default function Friends() {
           {outgoing.length ? <div className="list">{outgoing.map(r => row(r.user, r))}</div> : <div className="card muted small">{t('No requests sent.')}</div>}</section>
         <section className="sect"><span className="sect-t">{t('Friends')} · {friends.length}</span>
           {friends.length ? <div className="list">{friends.map(r => row(r.user, r))}</div> : <div className="card muted small">{t('No friends yet. Search for someone above.')}</div>}</section>
+        <section className="sect"><span className="sect-t">{t('Shared workouts from friends')}</span>
+          {feedError ? <div className="card muted small" role="alert">{feedError}</div>
+            : feed.length ? <div className="list">{feed.map(w => <SharedWorkoutCard key={w.owner.id + ':' + w.id} workout={w} owner={w.owner} onClick={() => nav('/friends/' + encodeURIComponent(w.owner.id) + '/workout/' + encodeURIComponent(w.id))} />)}</div>
+              : <div className="card muted small">{t('No shared workouts from friends yet.')}</div>}</section>
       </>}
     </>}
   </div>

@@ -16,7 +16,7 @@ vi.mock('../sheets.jsx', () => ({ confirmSheet: (...args) => mocks.confirm(...ar
 
 import Friends from './Friends.jsx'
 
-let host, root, rows
+let host, root, rows, feedWorkouts
 const person = (id, name) => ({ id, name })
 const relation = (id, name, status, direction) => ({ id: 'r-' + id, user: person(id, name), status, direction, created: '2026-10-16' })
 const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
@@ -25,9 +25,11 @@ const tap = el => act(async () => { el.click(); await new Promise(resolve => set
 
 beforeEach(() => {
   rows = [relation('alice', 'Alice', 'pending', 'incoming'), relation('bob', 'Bob', 'pending', 'outgoing'), relation('cara', 'Cara', 'accepted', 'outgoing')]
+  feedWorkouts = []
   mocks.api.mockReset(); mocks.nav.mockReset(); mocks.confirm.mockReset()
   mocks.api.mockImplementation(async (path, opts) => {
     if (path === '/api/friends' && !opts) return { code: 'owner', relationships: rows }
+    if (path === '/api/friends/feed') return { workouts: feedWorkouts }
     if (path === '/api/friends/lookup') return { user: person('dave', 'Dave'), relationship: null }
     if (path === '/api/friends/request') {
       rows = [...rows, relation('dave', 'Dave', 'pending', 'outgoing')]
@@ -73,4 +75,16 @@ it('accepts only from the received row and asks before removing a friend', async
   await tap(button('Remove'))
   expect(mocks.confirm).toHaveBeenCalledOnce()
   expect(mocks.confirm.mock.calls[0][0].confirmText).toBe('Remove friend')
+})
+
+it('opens a friend profile and one of their published workouts from the existing friends page', async () => {
+  feedWorkouts = [{ id: 'w1', title: 'Push day', date: '2026-10-16', durationMs: 60000, unit: 'kg', entries: [], owner: person('cara', 'Cara') }]
+  act(() => root.render(<Friends />))
+  await settle()
+  expect(host.textContent).toContain('Shared workouts from friends')
+  expect(host.textContent).toContain('Push day')
+  await tap(button('View'))
+  expect(mocks.nav).toHaveBeenCalledWith('/friends/cara')
+  await tap([...host.querySelectorAll('button')].find(el => el.textContent.includes('Push day')))
+  expect(mocks.nav).toHaveBeenCalledWith('/friends/cara/workout/w1')
 })

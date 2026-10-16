@@ -34,6 +34,7 @@ import { createMediaStore, mediaLimits, mediaConfig, MediaError, HASH_RE } from 
 import { effectiveRoutineId } from './queue.js';
 import { stampPut } from './sync-stamps.js';
 import { SERVERLESS, useDocuments, readDocument, writeDocument, appendDocument, removeDocument } from './serverless/documents.js';
+import { workoutKey, publicWorkout, sharedProgress } from './social-share.js';
 import { excusedOn, nudgeFor, nudgeWindowOpen, toneOf } from './nudge.js';
 
 const PORT = +(process.env.PORT || 3000);
@@ -148,11 +149,12 @@ db.creds = db.creds || [];
 db.subs = db.subs || [];
 db.invites = db.invites || [];
 db.deviceLinks = db.deviceLinks || [];   // unused one-time device links, hashed (device-link.js)
-// Social data lives in the same transaction as accounts on Vercel. Older instances have no
-// social key; only a mutation writes the versioned document for the first time.
+// Social data lives in the same transaction as accounts on Vercel. Version 1 held only
+// relationships. The lazy version 2 upgrade preserves them and adds explicit publications.
 function social() {
-  db.social ||= { version: 1, relationships: [] };
-  if (db.social.version !== 1 || !Array.isArray(db.social.relationships)) throw new Error('Unsupported social data');
+  db.social ||= { version: 2, relationships: [], shares: [] };
+  if (db.social.version === 1 && Array.isArray(db.social.relationships)) db.social = { ...db.social, version: 2, shares: [] };
+  if (db.social.version !== 2 || !Array.isArray(db.social.relationships) || !Array.isArray(db.social.shares)) throw new Error('Unsupported social data');
   return db.social;
 }
 const activeUser = id => db.users.find(u => u.id === id && !u.disabled) || null;
@@ -165,6 +167,8 @@ function visibleRelations(viewerId) {
   return social().relationships.filter(r =>
     (r.from === viewerId || r.to === viewerId) && activeUser(r.from) && activeUser(r.to));
 }
+const acceptedFriend = (a, b) => !!activeUser(a) && !!activeUser(b) && social().relationships.some(r =>
+  r.status === 'accepted' && ((r.from === a && r.to === b) || (r.from === b && r.to === a)));
 async function friendAction(req, res, action) {
   const user = readSession(req);
   if (!user) return json(res, 401, { error: 'not signed in' });
@@ -234,6 +238,16 @@ function readStateStrict(uid) {
   try { raw = readDocument(stateFile(uid)); }
   catch (e) { return e.code === 'ENOENT' ? null : UNREADABLE; }
   try { return JSON.parse(raw); } catch { return UNREADABLE; }
+}
+const workoutIn = (state, id) => (Array.isArray(state?.workouts) ? state.workouts : []).find(w => workoutKey(w) === id) || null;
+function sharedOfOwner(ownerId) {
+  const state = readStateStrict(ownerId);
+  if (state === UNREADABLE) return UNREADABLE;
+  return social().shares.filter(share => share.ownerId === ownerId).map(share => {
+    const workout = workoutIn(state, share.workoutId);
+    const visible = workout && publicWorkout(workout, state);
+    return visible ? { ...visible, publishedAt: share.created } : null;
+  }).filter(Boolean);
 }
 // A stored document as a client gets it: without the server's own notes `_unstamped` and `_prior`.
 function forClient(S) {
@@ -2271,6 +2285,86 @@ const routes = {
   'POST /api/friends/cancel': (req, res) => friendAction(req, res, 'cancel'),
   'POST /api/friends/remove': (req, res) => friendAction(req, res, 'remove'),
 
+  /* ---------- manually published workouts ---------- */
+  'GET /api/shares': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const workouts = sharedOfOwner(user.id);
+    if (workouts === UNREADABLE) return json(res, 503, { error: 'state unreadable' });
+    json(res, 200, { shares: workouts.map(w => ({ workoutId: w.id, publishedAt: w.publishedAt })) });
+  },
+  'POST /api/shares/publish': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const wait = SOCIAL_ACTIONS.take(user.id);
+    if (wait) return tooMany(res, wait);
+    const body = await readBody(req);
+    if (readSession(req) !== user) return json(res, 401, { error: 'not signed in' });
+    const id = typeof body.workoutId === 'string' ? body.workoutId : '';
+    if (!id || id.length > 120) return json(res, 400, { error: 'workout id required' });
+    const state = readStateStrict(user.id);
+    if (state === UNREADABLE) return json(res, 503, { error: 'state unreadable' });
+    if (!workoutIn(state, id)) return json(res, 404, { error: 'workout not saved' });
+    let share = social().shares.find(s => s.ownerId === user.id && s.workoutId === id);
+    if (!share) {
+      share = { ownerId: user.id, workoutId: id, created: new Date().toISOString() };
+      social().shares.push(share);
+      saveDb();
+    }
+    json(res, 200, { share: { workoutId: share.workoutId, publishedAt: share.created } });
+  },
+  'POST /api/shares/revoke': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const wait = SOCIAL_ACTIONS.take(user.id);
+    if (wait) return tooMany(res, wait);
+    const body = await readBody(req);
+    if (readSession(req) !== user) return json(res, 401, { error: 'not signed in' });
+    const id = typeof body.workoutId === 'string' ? body.workoutId : '';
+    const before = social().shares.length;
+    social().shares = social().shares.filter(s => !(s.ownerId === user.id && s.workoutId === id));
+    if (social().shares.length === before) return json(res, 404, { error: 'share not found' });
+    saveDb();
+    json(res, 200, { ok: true });
+  },
+  'GET /api/friends/feed': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const ids = [...new Set(visibleRelations(user.id).filter(r => r.status === 'accepted').map(r => r.from === user.id ? r.to : r.from))];
+    const workouts = [];
+    for (const id of ids) {
+      const shared = sharedOfOwner(id);
+      if (shared === UNREADABLE) return json(res, 503, { error: 'state unreadable' });
+      workouts.push(...shared.map(w => ({ ...w, owner: socialProfile(activeUser(id)) })));
+    }
+    workouts.sort((a, b) => b.publishedAt.localeCompare(a.publishedAt) || b.date.localeCompare(a.date));
+    json(res, 200, { workouts: workouts.slice(0, 50) });
+  },
+  'GET /api/friends/profile': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const id = new URL(req.url, 'http://x').searchParams.get('id');
+    if (!acceptedFriend(user.id, id)) return json(res, 404, { error: 'friend not found' });
+    const shared = sharedOfOwner(id);
+    if (shared === UNREADABLE) return json(res, 503, { error: 'state unreadable' });
+    const workouts = shared.sort((a, b) => b.date.localeCompare(a.date) || b.publishedAt.localeCompare(a.publishedAt)).slice(0, 100);
+    json(res, 200, { user: socialProfile(activeUser(id)), workouts, progress: sharedProgress(workouts) });
+  },
+  'GET /api/friends/workout': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const query = new URL(req.url, 'http://x').searchParams;
+    const ownerId = query.get('ownerId');
+    const workoutId = query.get('workoutId');
+    if (!acceptedFriend(user.id, ownerId) || !social().shares.some(s => s.ownerId === ownerId && s.workoutId === workoutId))
+      return json(res, 404, { error: 'shared workout not found' });
+    const state = readStateStrict(ownerId);
+    if (state === UNREADABLE) return json(res, 503, { error: 'state unreadable' });
+    const workout = publicWorkout(workoutIn(state, workoutId), state);
+    if (!workout) return json(res, 404, { error: 'shared workout not found' });
+    json(res, 200, { workout, owner: socialProfile(activeUser(ownerId)) });
+  },
+
   // `rev` is the server's own count of writes to this profile (also stored inside the document as
   // `_rev`, so every other reader of the file — reminder tick, admin, Coach, MCP — is unaffected).
   // A client pushes it back as `baseRev`, and a write over a document it never saw is refused.
@@ -2380,6 +2474,12 @@ const routes = {
     try { text = JSON.stringify(body.state); }
     catch (e) { if (e instanceof RangeError) return json(res, 400, { error: 'invalid state' }); throw e; }
     atomicWrite(stateFile(user.id), text);
+    // A publication points at the current personal document, never a saved copy. Once the
+    // source is deleted, discard its publication so reusing an id cannot expose a new workout.
+    const liveWorkoutIds = new Set((Array.isArray(body.state.workouts) ? body.state.workouts : []).map(workoutKey).filter(Boolean));
+    const sharesBefore = social().shares.length;
+    social().shares = social().shares.filter(s => s.ownerId !== user.id || liveWorkoutIds.has(s.workoutId));
+    if (social().shares.length !== sharesBefore) saveDb();
     // The stat cache cannot see this write on its own: mtime granularity is 4 ms here (ext4 on
     // this kernel — 3901 of 3999 back-to-back same-size writes shared one timestamp), and a
     // `_rev` going from 7 to 8 does not change the file's size, so two writes inside one 4 ms
@@ -2568,6 +2668,7 @@ const routes = {
     // A device link made before the lock would otherwise still be waiting when it is lifted.
     if (u.disabled) dropDeviceLinks(db, u.id);
     if (u.disabled) social().relationships = social().relationships.filter(r => r.from !== u.id && r.to !== u.id);
+    if (u.disabled) social().shares = social().shares.filter(s => s.ownerId !== u.id);
     saveDb();
     audit(req, u.disabled ? 'admin.user.disable' : 'admin.user.enable', { user: admin, target: u });
     json(res, 200, { ok: true, id: u.id, disabled: u.disabled });
@@ -2591,6 +2692,7 @@ const routes = {
     db.creds = (db.creds || []).filter(c => c.userId !== u.id);
     db.subs = (db.subs || []).filter(x => x.userId !== u.id);
     social().relationships = social().relationships.filter(r => r.from !== u.id && r.to !== u.id);
+    social().shares = social().shares.filter(s => s.ownerId !== u.id);
     dropDeviceLinks(db, u.id);
     presence.delete(u.id);
     // The training history and any Coach credential of theirs, both outside db.json.

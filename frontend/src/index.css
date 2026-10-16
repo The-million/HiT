@@ -297,6 +297,19 @@ h4.sec{
 .friend-row .grow{flex:1 1 100px}
 .friend-actions{display:flex;flex-wrap:wrap;gap:4px;margin-inline-start:auto}
 .friend-feedback{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.workout-share-control{display:flex;flex-direction:column;align-items:flex-start;gap:7px;margin-top:12px}
+.shared-workout-row{cursor:pointer}
+.shared-workout-row .grow{min-width:0}
+.shared-workout-detail .row{min-width:0}
+.shared-workout-detail .grow{min-width:0;flex:1}
+.shared-exercise{padding:12px 0;border-top:1px solid var(--sep, var(--surface-3))}
+.shared-exercise:first-of-type{margin-top:12px}
+.shared-exercise .small{margin-top:5px}
+.shared-week-chart{display:flex;align-items:flex-end;gap:6px;min-height:110px;overflow-x:auto}
+.shared-week{display:flex;flex:1;min-width:28px;flex-direction:column;align-items:center;gap:5px}
+.shared-week-bar{width:min(100%, 26px);background:var(--acc);border-radius:5px 5px 2px 2px}
+.shared-progress-row{padding:8px 0;border-top:1px solid var(--sep, var(--surface-3))}
+.shared-progress-row:first-child{border-top:0}
 
 /* ------------------------------------------------------ inset group list -- */
 .sect{margin-bottom:22px}

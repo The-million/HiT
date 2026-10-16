@@ -23,6 +23,7 @@ import { durationSheet } from './components/DurationWheel.jsx'
 import { SG_NAME_MAX } from './lib/superset-meta.js'
 import { REST_MAX, fmtRest } from './lib/duration.js'
 import Icon from './components/Icon.jsx'
+import ShareWorkoutButton from './components/ShareWorkoutButton.jsx'
 import { Button, Slider, Switch, Segmented, SelectRow, Row, TextField, NumberField, MultiSelectRow } from './components/ui.jsx'
 import { glyphOf, GLYPH_GROUPS, DEFAULT_GLYPH } from './lib/glyphs.js'
 import BodyMap from './components/BodyMap.jsx'
@@ -2585,6 +2586,8 @@ function WorkoutDetail({ w, close }) {
     <div style={{ height: 8 }} />
     <Button icon="share" onClick={shareAsImage}>{t('Share as image')}</Button>
     <div style={{ height: 8 }} />
+    <ShareWorkoutButton workout={w} confirm={confirmSheet} />
+    <div style={{ height: 8 }} />
     <Button icon="download" onClick={exportFit}>{t('Export as .fit file')}</Button>
     <div style={{ height: 10 }} />
     {/* Matched the way the edits above are, not by id: a workout from before ids has none, and
@@ -3328,6 +3331,7 @@ function FinishSummary({ w, prs, e1prs = [], close }) {
     {/* The moment for a progress photo or the clip of a set: the workout is already saved, so
         what is added here goes straight onto its record. */}
     <div style={{ textAlign: 'start' }}><WorkoutMediaSection w={w} hint /></div>
+    <ShareWorkoutButton workout={w} confirm={confirmSheet} />
     <Button variant="primary" onClick={() => closeThenNav(close, '/home')}>{t('Nice!')}</Button>
   </div>
 }
